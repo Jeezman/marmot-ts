@@ -135,6 +135,13 @@ export type CreateKeyPackageEventOptions = {
   /** Pubkey of the author (optional for drafts; required for Nostr kind 443 events) */
   relays?: string[];
   client?: string;
+  /**
+   * Whether to include the NIP-70 protected tag (["-"]).
+   *
+   * Per MIP-00 this SHOULD be omitted by default because many relays reject
+   * protected events.
+   */
+  protected?: boolean;
 };
 
 /**
@@ -190,12 +197,18 @@ export function createKeyPackageEvent(
   const version = versionName === "mls10" ? "1.0" : String(keyPackage.version);
 
   // Build tags
-  const tags: string[][] = [
+  const tags: string[][] = [];
+
+  // NIP-70: protected event — relay must not serve this event to non-authors.
+  // NOTE: Optional/opt-in because many popular relays reject protected events.
+  if (options.protected) tags.push(["-"]);
+
+  tags.push(
     [KEY_PACKAGE_MLS_VERSION_TAG, version],
     [KEY_PACKAGE_CIPHER_SUITE_TAG, ciphersuiteHex],
     [KEY_PACKAGE_EXTENSIONS_TAG, ...filteredExtensionTypes],
     ["encoding", "base64"],
-  ];
+  );
 
   // Add client tag if provided
   if (client) tags.push([KEY_PACKAGE_CLIENT_TAG, client]);

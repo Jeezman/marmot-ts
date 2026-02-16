@@ -8,16 +8,21 @@ import {
   ClientState,
   CryptoProvider,
   defaultCryptoProvider,
+  getOwnLeafNode,
   joinGroup,
   KeyPackage,
   PrivateKeyPackage,
 } from "ts-mls";
 import { CiphersuiteName, ciphersuites } from "ts-mls/crypto/ciphersuite.js";
 import { marmotAuthService } from "../core/auth-service.js";
-import { createCredential } from "../core/credential.js";
+import { createCredential, getCredentialPubkey } from "../core/credential.js";
 import { defaultCapabilities } from "../core/default-capabilities.js";
 import { createSimpleGroup, SimpleGroupOptions } from "../core/group.js";
 import { generateKeyPackage } from "../core/key-package.js";
+import {
+  createKeyPackageEvent,
+  createDeleteKeyPackageEvent,
+} from "../core/key-package-event.js";
 import { getWelcome } from "../core/welcome.js";
 import {
   deserializeClientState,
@@ -35,6 +40,7 @@ import {
   MarmotGroup,
 } from "./group/marmot-group.js";
 import { NostrNetworkInterface } from "./nostr-interface.js";
+import type { EventTemplate } from "nostr-tools";
 
 export type MarmotClientOptions<
   THistory extends BaseGroupHistory | undefined = undefined,
@@ -476,6 +482,40 @@ export class MarmotClient<
     this.setGroupInstance(group);
     this.emit("groupJoined", group);
 
+    // MIP-02 SHOULD: post-join self-update to rotate leaf key material for forward secrecy.
+    // Admin joiners can commit directly (empty commit with UpdatePath rotates leaf
+    // keys). Non-admin joiners would need to send an Update proposal, but this
+    // requires ts-mls to manage both old and new HPKE private keys until the
+    // commit resolving the proposal is processed — without that, the proposer
+    // cannot decrypt the admin's commit and their group state breaks.
+    // See: ts-mls applyUpdatePathSecret uses privatePath which won't have the
+    // new HPKE private key from an externally-constructed ProposalUpdate.
+    try {
+      // Derive pubkey from the key package credential to avoid triggering
+      // a signer popup (e.g. hardware wallet) for getPublicKey().
+      const ownLeaf = getOwnLeafNode(clientState);
+      const pubkey = getCredentialPubkey(ownLeaf.credential);
+      const groupData = group.groupData;
+      if (groupData && groupData.adminPubkeys.includes(pubkey)) {
+        await group.commit({
+          extraProposals: [],
+          proposalRefs: [],
+        });
+        console.log(
+          `[MarmotClient.joinGroupFromWelcome] Post-join self-update commit sent (admin)`,
+        );
+      }
+      // TODO: non-admin self-update requires a ts-mls createSelfUpdateProposal()
+      // helper that internally retains the new HPKE private key in privatePath
+      // so processMessage can decrypt the commit that applies the Update.
+    } catch (err) {
+      // Best-effort — failure to self-update is non-fatal.
+      console.warn(
+        `[MarmotClient.joinGroupFromWelcome] Post-join self-update failed:`,
+        err,
+      );
+    }
+
     return group;
   }
 
@@ -575,5 +615,69 @@ export class MarmotClient<
       this.keyPackageStore.off("keyPackageAdded", handleChange);
       this.keyPackageStore.off("keyPackageRemoved", handleChange);
     }
+  }
+
+  /**
+   * Rotates key packages by generating a fresh one and retiring old ones.
+   *
+   * MIP-00 requires that key packages use unique init keys and are periodically
+   * rotated so compromised init keys cannot be used to add the client to groups.
+   *
+   * This method:
+   * 1. Generates a new key package with fresh init keys
+   * 2. Stores the private material locally
+   * 3. Returns unsigned event templates for the caller to sign and publish:
+   *    - A kind 443 event for the new key package
+   *    - A kind 5 (NIP-09) deletion event for old key packages (if eventIds provided)
+   *
+   * @param options - Options for key package rotation
+   * @param options.relays - Relay URLs to include in the key package event
+   * @param options.client - Client identifier string for the key package event
+   * @param options.oldEventIds - Event IDs of previous kind 443 events to delete
+   * @param options.ciphersuite - Ciphersuite to use (default: MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519)
+   * @returns The new key package event template and optional delete event template
+   */
+  async rotateKeyPackage(options?: {
+    relays?: string[];
+    client?: string;
+    oldEventIds?: string[];
+    ciphersuite?: CiphersuiteName;
+    /** Whether to include the NIP-70 protected tag on the new key package event */
+    protected?: boolean;
+  }): Promise<{
+    keyPackageEvent: EventTemplate;
+    deleteEvent?: EventTemplate;
+  }> {
+    const ciphersuiteImpl = await this.getCiphersuiteImpl(options?.ciphersuite);
+
+    // Generate a new key package with fresh init keys
+    const pubkey = await this.signer.getPublicKey();
+    const credential = await createCredential(pubkey);
+    const keyPackage = await generateKeyPackage({
+      credential,
+      ciphersuiteImpl,
+    });
+
+    // Build the unsigned kind 443 event before persisting private material,
+    // so a serialization failure doesn't leave orphaned keys in the store.
+    const keyPackageEvent = createKeyPackageEvent({
+      keyPackage: keyPackage.publicPackage,
+      relays: options?.relays,
+      client: options?.client,
+      protected: options?.protected,
+    });
+
+    // Store the private material locally
+    await this.keyPackageStore.add(keyPackage);
+
+    // Build a NIP-09 delete event for old key packages if IDs are provided
+    let deleteEvent: EventTemplate | undefined;
+    if (options?.oldEventIds && options.oldEventIds.length > 0) {
+      deleteEvent = createDeleteKeyPackageEvent({
+        events: options.oldEventIds,
+      });
+    }
+
+    return { keyPackageEvent, deleteEvent };
   }
 }

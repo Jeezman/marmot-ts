@@ -164,6 +164,9 @@ describe("createKeyPackageEvent encoding", () => {
       relays: ["wss://relay.example.com"],
     });
 
+    // NIP-70 protected tag should be opt-in
+    expect(event.tags.some((t) => t[0] === "-")).toBe(false);
+
     // Should have encoding tag
     const encodingTag = event.tags.find((t) => t[0] === "encoding");
     expect(encodingTag).toEqual(["encoding", "base64"]);
@@ -175,6 +178,26 @@ describe("createKeyPackageEvent encoding", () => {
       event.content.length % 2 !== 0 ||
       /[g-zG-Z]/.test(event.content);
     expect(hasBase64Chars).toBe(true);
+  });
+
+  it("should include NIP-70 protected tag when enabled", async () => {
+    const credential = createCredential(validPubkey);
+    const ciphersuiteImpl = await getCiphersuiteImpl(
+      "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
+      defaultCryptoProvider,
+    );
+
+    const keyPackage = await generateKeyPackage({
+      credential,
+      ciphersuiteImpl,
+    });
+
+    const event = createKeyPackageEvent({
+      keyPackage: keyPackage.publicPackage,
+      protected: true,
+    });
+
+    expect(event.tags.some((t) => t[0] === "-")).toBe(true);
   });
 
   it("should be able to decode base64-encoded key package event", async () => {
