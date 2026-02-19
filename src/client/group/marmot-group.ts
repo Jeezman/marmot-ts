@@ -40,11 +40,7 @@ import { isPrivateMessage } from "../../core/message.js";
 import { MarmotGroupData } from "../../core/protocol.js";
 import { createWelcomeRumor } from "../../core/welcome.js";
 import { GroupStateStore } from "../../store/group-state-store.js";
-import {
-  createGiftWrap,
-  hasAck,
-  publishWithRetries,
-} from "../../utils/index.js";
+import { createGiftWrap, hasAck } from "../../utils/index.js";
 import { NoGroupRelaysError, NoMarmotGroupDataError } from "../errors.js";
 import { NostrNetworkInterface, PublishResponse } from "../nostr-interface.js";
 import { marmotAuthService } from "../../core/auth-service.js";
@@ -267,11 +263,10 @@ export class MarmotGroup<
       ciphersuite: this.ciphersuite,
     });
 
-    const response = await publishWithRetries(
-      this.network.publish.bind(this.network),
-      relays,
-      commitEvent,
-    );
+    const response = await this.network.publish(relays, commitEvent);
+    if (!hasAck(response)) {
+      throw new Error("Failed to publish commit event: no relay acknowledged");
+    }
 
     // Advance local state after publish.
     this.state = newState;

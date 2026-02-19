@@ -98,7 +98,6 @@ describe("exports", () => {
         "keyPackageDefaultExtensions",
         "marmotGroupDataToExtension",
         "normalizeRelayUrl",
-        "publishWithRetries",
         "readGroupMessage",
         "readGroupMessages",
         "replaceExtension",
