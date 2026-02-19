@@ -41,11 +41,7 @@ import { MarmotGroupData } from "../../core/protocol.js";
 import { createWelcomeRumor } from "../../core/welcome.js";
 import { GroupStateStore } from "../../store/group-state-store.js";
 import { createGiftWrap, hasAck } from "../../utils/index.js";
-import {
-  NoGroupRelaysError,
-  NoMarmotGroupDataError,
-  NoRelayReceivedEventError,
-} from "../errors.js";
+import { NoGroupRelaysError, NoMarmotGroupDataError } from "../errors.js";
 import { NostrNetworkInterface, PublishResponse } from "../nostr-interface.js";
 import { marmotAuthService } from "../../core/auth-service.js";
 import { proposeInviteUser } from "./proposals/invite-user.js";
@@ -120,6 +116,10 @@ export function createAdminCommitPolicyCallback(args: {
 
   return (incoming) => {
     if (incoming.kind === "proposal") return "accept";
+
+    // MIP-02: post-join self-updates are expressed as commits with no proposals.
+    // These MUST be accepted from any member (admin or not) to allow key hygiene.
+    if (incoming.proposals.length === 0) return "accept";
 
     // Commit must be attributable to an admin.
     const senderLeafIndexUnknown = incoming.senderLeafIndex;
@@ -228,6 +228,51 @@ export class MarmotGroup<
   // Common accessors for marmot group data
   get relays() {
     return this.groupData?.relays;
+  }
+
+  /**
+   * Performs a self-update commit (no proposals) to rotate this member's leaf key material.
+   *
+   * This is required by MIP-02 for forward secrecy after joining from a Welcome.
+   *
+   * Unlike {@link commit}, this operation is allowed for non-admin members.
+   */
+  async selfUpdate(): Promise<Record<string, PublishResponse>> {
+    const groupData = this.groupData;
+    if (!groupData) throw new NoMarmotGroupDataError();
+
+    const relays = this.relays;
+    if (!relays) throw new NoGroupRelaysError();
+
+    // Create a commit with explicitly empty proposals. In ts-mls, this results in
+    // a self-update commit that includes an UpdatePath (rotating leaf secrets).
+    const { commit, newState } = await createCommit({
+      context: {
+        cipherSuite: this.ciphersuite,
+        authService: marmotAuthService,
+      },
+      state: this.state,
+      wireAsPublicMessage: false,
+      ratchetTreeExtension: true,
+      extraProposals: [],
+    });
+
+    const commitEvent = await createGroupEvent({
+      message: commit,
+      state: this.state,
+      ciphersuite: this.ciphersuite,
+    });
+
+    const response = await this.network.publish(relays, commitEvent);
+    if (!hasAck(response)) {
+      throw new Error("Failed to publish commit event: no relay acknowledged");
+    }
+
+    // Advance local state after publish.
+    this.state = newState;
+    await this.save();
+
+    return response;
   }
 
   constructor(state: ClientState, options: MarmotGroupOptions<THistory>) {
@@ -409,9 +454,17 @@ export class MarmotGroup<
     });
 
     // Publish to the group's relays
-    const response = await this.publish(applicationEvent);
+    const relays = this.relays;
+    if (!relays) throw new NoGroupRelaysError();
+    const response = await this.network.publish(relays, applicationEvent);
     if (!hasAck(response)) {
-      throw new NoRelayReceivedEventError(applicationEvent.id);
+      const errors = Object.values(response)
+        .filter((r) => !r.ok && r.message)
+        .map((r) => r.message)
+        .join("; ");
+      throw new Error(
+        `Failed to publish application message: ${errors || "no relay acknowledged"}`,
+      );
     }
 
     // Update the group state after successful publish
@@ -496,9 +549,10 @@ export class MarmotGroup<
       ratchetTreeExtension: true,
     };
 
-    // Only use extraProposals if we have proposals to include
-    // Otherwise, createCommit will use ALL proposals from state.unappliedProposals
-    if (allProposals.length > 0) {
+    // If the caller explicitly provided extraProposals or proposalRefs, use
+    // exactly those (even if empty — that means "self-update, no proposals").
+    // Only fall through to the "commit all unapplied" default when neither is set.
+    if (options?.extraProposals || options?.proposalRefs) {
       commitOptions.extraProposals = allProposals;
     }
 
@@ -522,12 +576,22 @@ export class MarmotGroup<
       ciphersuite: this.ciphersuite,
     });
 
-    // Publish to the group's relays
+    // Publish to the group's relays.
     // MIP-02 REQUIRES: Commit MUST be published and acknowledged by relays BEFORE sending Welcome messages.
     // This ordering is critical for protocol correctness - new members must be able to fetch the commit
     // that added them before processing their Welcome.
-    const response = await this.publish(commitEvent);
-    if (!hasAck(response)) throw new NoRelayReceivedEventError(commitEvent.id);
+    const relays = this.relays;
+    if (!relays) throw new NoGroupRelaysError();
+    const response = await this.network.publish(relays, commitEvent);
+    if (!hasAck(response)) {
+      const errors = Object.values(response)
+        .filter((r) => !r.ok && r.message)
+        .map((r) => r.message)
+        .join("; ");
+      throw new Error(
+        `Failed to publish commit: ${errors || "no relay acknowledged"}`,
+      );
+    }
 
     // Update the group state after successful publish
     this.state = newState;
@@ -551,7 +615,7 @@ export class MarmotGroup<
       const innerWelcome = welcome?.welcome;
       if (!innerWelcome) return response;
 
-      await Promise.allSettled(
+      const welcomeResults = await Promise.allSettled(
         options.welcomeRecipients.map(async (recipient) => {
           const welcomeRumor = createWelcomeRumor({
             welcome: innerWelcome,
@@ -591,15 +655,12 @@ export class MarmotGroup<
           }
 
           if (inboxRelays.length === 0) {
-            console.warn(
-              `No relays available to send Welcome to recipient ${recipient.pubkey.slice(
-                0,
-                16,
-              )}...`,
+            throw new Error(
+              `No relays available to send Welcome to recipient ${recipient.pubkey.slice(0, 16)}...`,
             );
-            return;
           }
 
+          // Welcome is the most critical delivery — new members can't join without it.
           const publishResult = await this.network.publish(
             inboxRelays,
             giftWrapEvent,
@@ -610,9 +671,41 @@ export class MarmotGroup<
             publishResult,
           );
 
-          // TODO: need to detect publish failure to attempt to send later
+          return publishResult;
         }),
       );
+
+      // Surface welcome delivery failures so callers can detect and retry
+      const failureDetails = welcomeResults
+        .map((r, i) => ({
+          result: r,
+          recipient: options.welcomeRecipients![i],
+        }))
+        .filter(
+          (
+            x,
+          ): x is {
+            result: PromiseRejectedResult;
+            recipient: WelcomeRecipient;
+          } => x.result.status === "rejected",
+        )
+        .map((x) => {
+          const msg =
+            x.result.reason instanceof Error
+              ? x.result.reason.message
+              : String(x.result.reason);
+          return `${x.recipient.pubkey.slice(0, 16)}…: ${msg}`;
+        });
+
+      if (failureDetails.length > 0) {
+        console.error(
+          `[MarmotGroup.commit] ${failureDetails.length}/${options.welcomeRecipients.length} Welcome(s) failed to deliver:`,
+          failureDetails,
+        );
+        throw new Error(
+          `Failed to deliver ${failureDetails.length}/${options.welcomeRecipients.length} Welcome message(s): ${failureDetails.join("; ")}`,
+        );
+      }
     }
 
     return response;

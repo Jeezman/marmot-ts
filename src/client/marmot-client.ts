@@ -18,6 +18,11 @@ import { createCredential } from "../core/credential.js";
 import { defaultCapabilities } from "../core/default-capabilities.js";
 import { createSimpleGroup, SimpleGroupOptions } from "../core/group.js";
 import { generateKeyPackage } from "../core/key-package.js";
+import { LAST_RESORT_KEY_PACKAGE_EXTENSION_TYPE } from "../core/protocol.js";
+import {
+  createKeyPackageEvent,
+  createDeleteKeyPackageEvent,
+} from "../core/key-package-event.js";
 import { getWelcome } from "../core/welcome.js";
 import {
   deserializeClientState,
@@ -35,6 +40,7 @@ import {
   MarmotGroup,
 } from "./group/marmot-group.js";
 import { NostrNetworkInterface } from "./nostr-interface.js";
+import type { EventTemplate } from "nostr-tools";
 
 export type MarmotClientOptions<
   THistory extends BaseGroupHistory | undefined = undefined,
@@ -73,6 +79,8 @@ type MarmotClientEvents<THistory extends BaseGroupHistory | undefined = any> = {
   groupImported: (group: MarmotGroup<THistory>) => void;
   /** Emitted when a group is joined */
   groupJoined: (group: MarmotGroup<THistory>) => void;
+  /** Emitted when a key package should be deleted from relays after successful join (MIP-00). */
+  keyPackageRelayDeleteRequested: (args: { keyPackageEventId: string }) => void;
   /** Emitted when a group is unloaded */
   groupUnloaded: (groupId: Uint8Array) => void;
   /** Emitted when a group is destroyed */
@@ -424,6 +432,8 @@ export class MarmotClient<
     // Try each key package in priority order until one successfully decrypts the Welcome message
     let clientState: ClientState | null = null;
     let lastError: Error | null = null;
+    let consumedKeyPackageRef: Uint8Array | null = null;
+    let consumedKeyPackage: KeyPackage | null = null;
 
     for (const keyPackage of prioritizedKeyPackages) {
       try {
@@ -439,6 +449,8 @@ export class MarmotClient<
           keyPackage: keyPackage.publicPackage,
           privateKeys: keyPackage.privatePackage,
         });
+        consumedKeyPackageRef = keyPackage.keyPackageRef;
+        consumedKeyPackage = keyPackage.publicPackage;
         // If successful, break out of the loop
         break;
       } catch (error) {
@@ -454,6 +466,37 @@ export class MarmotClient<
         ? `Failed to join group with any matching key package. Last error: ${lastError.message}`
         : "Failed to join group with any matching key package";
       throw new Error(errorMessage);
+    }
+
+    // MIP-00: After successfully processing a Welcome, clients SHOULD delete
+    // the consumed KeyPackage from local storage to minimize reuse/exposure.
+    // last_resort nuance (MIP-00): retain init_key private material while the
+    // KeyPackage remains published / expected to be needed for more Welcomes.
+    //
+    // Practical handling in this repo:
+    // - If we have a KeyPackage event id (relay-based distribution), we request
+    //   relay deletion best-effort and treat that as intent to unpublish/rotate,
+    //   so we delete local private material.
+    // - If we *don't* have an event id (out-of-band sharing / unknown publish
+    //   status), we retain local private material for last_resort KeyPackages.
+    if (consumedKeyPackageRef) {
+      const isLastResort = !!consumedKeyPackage?.extensions?.some(
+        (ext) =>
+          typeof ext === "object" &&
+          ext !== null &&
+          "extensionType" in ext &&
+          // extensionType is numeric in ts-mls v2
+          (ext as { extensionType: number }).extensionType ===
+            LAST_RESORT_KEY_PACKAGE_EXTENSION_TYPE,
+      );
+
+      if (isLastResort && !keyPackageEventId) {
+        console.warn(
+          "[MarmotClient.joinGroupFromWelcome] Consumed KeyPackage had last_resort extension and no event id; retaining local private material per MIP-00",
+        );
+      } else {
+        await this.keyPackageStore.remove(consumedKeyPackageRef);
+      }
     }
 
     // Save the group state to the store
@@ -475,6 +518,29 @@ export class MarmotClient<
     // Add the group to the cache
     this.setGroupInstance(group);
     this.emit("groupJoined", group);
+
+    // MIP-00: best-effort request to delete the relay-published KeyPackage event.
+    // Even if the KeyPackage has last_resort, implementations typically rotate/
+    // unpublish after a successful join; in that common case, requesting relay
+    // deletion is still appropriate.
+    if (keyPackageEventId) {
+      this.emit("keyPackageRelayDeleteRequested", { keyPackageEventId });
+    }
+
+    // MIP-02 SHOULD: post-join self-update to rotate leaf key material for forward secrecy.
+    // This is REQUIRED within 24 hours (MIP-02), and recommended immediately.
+    try {
+      await group.selfUpdate();
+      console.log(
+        `[MarmotClient.joinGroupFromWelcome] Post-join self-update commit sent`,
+      );
+    } catch (err) {
+      // Best-effort — failure to self-update is non-fatal.
+      console.warn(
+        `[MarmotClient.joinGroupFromWelcome] Post-join self-update failed:`,
+        err,
+      );
+    }
 
     return group;
   }
@@ -575,5 +641,71 @@ export class MarmotClient<
       this.keyPackageStore.off("keyPackageAdded", handleChange);
       this.keyPackageStore.off("keyPackageRemoved", handleChange);
     }
+  }
+
+  /**
+   * Rotates key packages by generating a fresh one and retiring old ones.
+   *
+   * MIP-00 requires that key packages use unique init keys and are periodically
+   * rotated so compromised init keys cannot be used to add the client to groups.
+   *
+   * This method:
+   * 1. Generates a new key package with fresh init keys
+   * 2. Stores the private material locally
+   * 3. Returns unsigned event templates for the caller to sign and publish:
+   *    - A kind 443 event for the new key package
+   *    - A kind 5 (NIP-09) deletion event for old key packages (if eventIds provided)
+   *
+   * @param options - Options for key package rotation
+   * @param options.relays - Relay URLs to include in the key package event
+   * @param options.client - Client identifier string for the key package event
+   * @param options.oldEventIds - Event IDs of previous kind 443 events to delete
+   * @param options.ciphersuite - Ciphersuite to use (default: MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519)
+   * @returns The new key package event template and optional delete event template
+   */
+  async rotateKeyPackage(options?: {
+    relays?: string[];
+    client?: string;
+    oldEventIds?: string[];
+    ciphersuite?: CiphersuiteName;
+    /** Whether to include the NIP-70 protected tag on the new key package event */
+    protected?: boolean;
+  }): Promise<{
+    keyPackageEvent: EventTemplate;
+    deleteEvent?: EventTemplate;
+  }> {
+    const ciphersuiteImpl = await this.getCiphersuiteImpl(options?.ciphersuite);
+
+    // Generate a new key package with fresh init keys
+    const pubkey = await this.signer.getPublicKey();
+    const credential = await createCredential(pubkey);
+    const keyPackage = await generateKeyPackage({
+      credential,
+      ciphersuiteImpl,
+    });
+
+    // Store the private material locally
+    await this.keyPackageStore.add(keyPackage);
+
+    // Build the unsigned kind 443 event
+    const keyPackageEvent = await createKeyPackageEvent({
+      keyPackage: keyPackage.publicPackage,
+      relays: options?.relays,
+      client: options?.client,
+      protected: options?.protected,
+    });
+
+    // Store the private material locally
+    await this.keyPackageStore.add(keyPackage);
+
+    // Build a NIP-09 delete event for old key packages if IDs are provided
+    let deleteEvent: EventTemplate | undefined;
+    if (options?.oldEventIds && options.oldEventIds.length > 0) {
+      deleteEvent = createDeleteKeyPackageEvent({
+        events: options.oldEventIds,
+      });
+    }
+
+    return { keyPackageEvent, deleteEvent };
   }
 }

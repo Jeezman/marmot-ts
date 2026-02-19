@@ -159,10 +159,13 @@ describe("createKeyPackageEvent encoding", () => {
       ciphersuiteImpl,
     });
 
-    const event = createKeyPackageEvent({
+    const event = await createKeyPackageEvent({
       keyPackage: keyPackage.publicPackage,
       relays: ["wss://relay.example.com"],
     });
+
+    // NIP-70 protected tag should be opt-in
+    expect(event.tags.some((t) => t[0] === "-")).toBe(false);
 
     // Should have encoding tag
     const encodingTag = event.tags.find((t) => t[0] === "encoding");
@@ -177,6 +180,26 @@ describe("createKeyPackageEvent encoding", () => {
     expect(hasBase64Chars).toBe(true);
   });
 
+  it("should include NIP-70 protected tag when enabled", async () => {
+    const credential = createCredential(validPubkey);
+    const ciphersuiteImpl = await getCiphersuiteImpl(
+      "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
+      defaultCryptoProvider,
+    );
+
+    const keyPackage = await generateKeyPackage({
+      credential,
+      ciphersuiteImpl,
+    });
+
+    const event = await createKeyPackageEvent({
+      keyPackage: keyPackage.publicPackage,
+      protected: true,
+    });
+
+    expect(event.tags.some((t) => t[0] === "-")).toBe(true);
+  });
+
   it("should be able to decode base64-encoded key package event", async () => {
     const credential = createCredential(validPubkey);
     const ciphersuiteImpl = await getCiphersuiteImpl(
@@ -189,7 +212,7 @@ describe("createKeyPackageEvent encoding", () => {
       ciphersuiteImpl,
     });
 
-    const event = createKeyPackageEvent({
+    const event = await createKeyPackageEvent({
       keyPackage: originalKeyPackage.publicPackage,
       relays: ["wss://relay.example.com"],
     });
@@ -238,10 +261,7 @@ describe("createKeyPackageEvent encoding", () => {
       sig: "legacy-signature",
     };
 
-    // Should be able to decode legacy hex format
-    const decodedKeyPackage = getKeyPackage(legacyEvent);
-    expect(decodedKeyPackage).toBeDefined();
-    expect(decodedKeyPackage.leafNode.credential).toEqual(credential);
+    expect(() => getKeyPackage(legacyEvent)).toThrow(/encoding=base64 tag/i);
   });
 
   it("should decode hex-encoded events with explicit hex encoding tag", async () => {
@@ -273,9 +293,103 @@ describe("createKeyPackageEvent encoding", () => {
       sig: "hex-signature",
     };
 
-    // Should be able to decode with explicit hex tag
-    const decodedKeyPackage = getKeyPackage(hexEvent);
-    expect(decodedKeyPackage).toBeDefined();
-    expect(decodedKeyPackage.leafNode.credential).toEqual(credential);
+    expect(() => getKeyPackage(hexEvent)).toThrow(/encoding=base64 tag/i);
+  });
+});
+
+describe("spec compliance (MIP-00) — pending", () => {
+  it("should include an `i` tag with hex KeyPackageRef when publishing kind 443", async () => {
+    const validPubkey =
+      "884704bd421671e01c13f854d2ce23ce2a5bfe9562f4f297ad2bc921ba30c3a6";
+
+    const credential = createCredential(validPubkey);
+    const ciphersuiteImpl = await getCiphersuiteImpl(
+      "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
+      defaultCryptoProvider,
+    );
+
+    const keyPackage = await generateKeyPackage({
+      credential,
+      ciphersuiteImpl,
+    });
+
+    const event = await createKeyPackageEvent({
+      keyPackage: keyPackage.publicPackage,
+    });
+
+    const iTag = event.tags.find((t) => t[0] === "i");
+    expect(iTag).toBeDefined();
+    expect(iTag?.[1]).toMatch(/^[0-9a-f]+$/);
+  });
+
+  it("should reject decoding kind 443 events that are missing an encoding=base64 tag", async () => {
+    const validPubkey =
+      "884704bd421671e01c13f854d2ce23ce2a5bfe9562f4f297ad2bc921ba30c3a6";
+
+    const credential = createCredential(validPubkey);
+    const ciphersuiteImpl = await getCiphersuiteImpl(
+      "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
+      defaultCryptoProvider,
+    );
+
+    const keyPackage = await generateKeyPackage({
+      credential,
+      ciphersuiteImpl,
+    });
+
+    const encodedBytes = encode(keyPackageEncoder, keyPackage.publicPackage);
+    const missingEncodingEvent: NostrEvent = {
+      kind: KEY_PACKAGE_KIND,
+      pubkey: validPubkey,
+      created_at: unixNow(),
+      content: bytesToHex(encodedBytes),
+      tags: [
+        ["mls_protocol_version", "1.0"],
+        ["mls_ciphersuite", "0x0001"],
+        ["mls_extensions", "0x000a"],
+      ],
+      id: "missing-encoding-id",
+      sig: "missing-encoding-sig",
+    };
+
+    expect(() => getKeyPackage(missingEncodingEvent)).toThrow(
+      /encoding=base64 tag/i,
+    );
+  });
+
+  it("should reject decoding kind 443 events with encoding=hex", async () => {
+    const validPubkey =
+      "884704bd421671e01c13f854d2ce23ce2a5bfe9562f4f297ad2bc921ba30c3a6";
+
+    const credential = createCredential(validPubkey);
+    const ciphersuiteImpl = await getCiphersuiteImpl(
+      "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
+      defaultCryptoProvider,
+    );
+
+    const keyPackage = await generateKeyPackage({
+      credential,
+      ciphersuiteImpl,
+    });
+
+    const encodedBytes = encode(keyPackageEncoder, keyPackage.publicPackage);
+    const hexEncodingEvent: NostrEvent = {
+      kind: KEY_PACKAGE_KIND,
+      pubkey: validPubkey,
+      created_at: unixNow(),
+      content: bytesToHex(encodedBytes),
+      tags: [
+        ["mls_protocol_version", "1.0"],
+        ["mls_ciphersuite", "0x0001"],
+        ["mls_extensions", "0x000a"],
+        ["encoding", "hex"],
+      ],
+      id: "hex-encoding-id",
+      sig: "hex-encoding-sig",
+    };
+
+    expect(() => getKeyPackage(hexEncodingEvent)).toThrow(
+      /encoding=base64 tag/i,
+    );
   });
 });
