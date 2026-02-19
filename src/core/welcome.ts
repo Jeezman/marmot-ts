@@ -92,7 +92,7 @@ export function getWelcome(event: NostrEvent | Rumor): Welcome {
   const encodingFormat = getEncodingTag(event);
   if (encodingFormat !== "base64") {
     throw new Error(
-      "Invalid welcome event: missing encoding tag",
+      "Invalid welcome event: missing encoding=base64 tag",
     );
   }
   const content = decodeContent(event.content, encodingFormat);
