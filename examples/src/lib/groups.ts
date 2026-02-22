@@ -18,6 +18,16 @@ import {
 } from "../../../src/core";
 import { marmotClient$ } from "./marmot-client";
 
+/**
+ * Manual refresh hook for UIs that perform store writes outside of the normal
+ * event flow (or where some browsers miss EventEmitter-based events).
+ */
+const groupStoreManualRefresh$ = new BehaviorSubject<number>(0);
+
+export function triggerGroupStoreRefresh(): void {
+  groupStoreManualRefresh$.next(Date.now());
+}
+
 /** Currently selected group id (hex) */
 export const selectedGroupId$ = new BehaviorSubject<string | null>(null);
 
@@ -31,6 +41,7 @@ export const groupStoreChanges$ = marmotClient$.pipe(
     merge(
       // initial tick
       of(0),
+      groupStoreManualRefresh$,
       fromEvent(client.groupStateStore, "groupStateAdded"),
       fromEvent(client.groupStateStore, "groupStateUpdated"),
       fromEvent(client.groupStateStore, "groupStateRemoved"),

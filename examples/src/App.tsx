@@ -9,6 +9,7 @@ import SignInModal from "./components/signin/modal.tsx";
 import KeyPackageStoreModal from "./components/key-package-store-modal.tsx";
 import GroupStoreModal from "./components/group-store-modal.tsx";
 import Settings from "./examples/settings/index.tsx";
+import { RelayBanners } from "./components/relay-banners";
 
 function ExampleView(props: { example?: Example; isSettings?: boolean }) {
   const [path, setPath] = useState("");
@@ -88,6 +89,9 @@ function ExampleView(props: { example?: Example; isSettings?: boolean }) {
         </div>
 
         {/* Page content */}
+        <div className="p-4">
+          <RelayBanners />
+        </div>
         {props.isSettings ? (
           <ErrorBoundary
             fallbackRender={({ error }) => (

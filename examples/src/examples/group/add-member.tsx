@@ -29,7 +29,6 @@ import accounts, { keyPackageRelays$ } from "../../lib/accounts";
 import { marmotClient$ } from "../../lib/marmot-client";
 import { groupSummaries$ } from "../../lib/groups";
 import { pool } from "../../lib/nostr";
-import { extraRelays$ } from "../../lib/settings";
 import { getCiphersuiteNameFromId } from "../../lib/ciphersuite.js";
 
 // ============================================================================
@@ -102,6 +101,7 @@ function KeyPackageListItem({
   isSelected: boolean;
   onSelect: (event: NostrEvent) => void;
 }) {
+  const keyPackageRef = event.tags.find((t) => t[0] === "i")?.[1];
   const cipherSuiteId = getKeyPackageCipherSuiteId(event);
   const cipherSuiteName = cipherSuiteId
     ? getCiphersuiteNameFromId(cipherSuiteId)
@@ -128,7 +128,9 @@ function KeyPackageListItem({
               </span>
             </div>
             <div className="text-xs font-mono text-base-content/60">
-              {event.id.slice(0, 16)}...
+              {keyPackageRef
+                ? `${keyPackageRef.slice(0, 16)}…`
+                : `${event.id.slice(0, 16)}…`}
             </div>
             <div className="text-xs text-base-content/60 mt-1">
               Created: {new Date(event.created_at * 1000).toLocaleString()}
@@ -593,19 +595,14 @@ export default withSignIn(function AddMember() {
   const keyPackages =
     useObservableMemo(
       () =>
-        combineLatest([
-          selectedUserPubkey$,
-          keyPackageRelays$,
-          extraRelays$,
-        ]).pipe(
-          switchMap(([pubkey, keyPackageRelays, extraRelays]) => {
+        combineLatest([selectedUserPubkey$, keyPackageRelays$]).pipe(
+          switchMap(([pubkey, keyPackageRelays]) => {
             if (!pubkey) return of([]);
 
             const relays = relaySet(
               keyPackageRelays && keyPackageRelays.length > 0
                 ? keyPackageRelays
                 : [],
-              extraRelays,
             );
 
             return pool

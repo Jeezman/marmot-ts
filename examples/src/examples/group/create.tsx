@@ -1,5 +1,5 @@
 import { bytesToHex } from "@noble/hashes/utils.js";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { map, switchMap } from "rxjs";
 import type { CiphersuiteName, KeyPackage } from "ts-mls";
 import { defaultCryptoProvider, getCiphersuiteImpl } from "ts-mls";
@@ -13,6 +13,7 @@ import JsonBlock from "../../components/json-block";
 import { withSignIn } from "../../components/with-signIn";
 import { useObservable, useObservableMemo } from "../../hooks/use-observable";
 import accounts from "../../lib/accounts";
+import { mailboxes$ } from "../../lib/accounts";
 import { keyPackageStore$ } from "../../lib/key-package-store";
 import { marmotClient$ } from "../../lib/marmot-client";
 
@@ -47,6 +48,7 @@ interface ConfigurationFormProps {
   keyPackages: KeyPackage[];
   keyPackageStore: any;
   isCreating: boolean;
+  defaultRelays: string[];
   onSubmit: (data: ConfigurationFormData) => void;
 }
 
@@ -54,6 +56,7 @@ function ConfigurationForm({
   keyPackages,
   keyPackageStore,
   isCreating,
+  defaultRelays,
   onSubmit,
 }: ConfigurationFormProps) {
   const [selectedKeyPackageId, setSelectedKeyPackageId] = useState("");
@@ -63,6 +66,16 @@ function ConfigurationForm({
   const [groupDescription, setGroupDescription] = useState("");
   const [adminPubkeys, setAdminPubkeys] = useState<string[]>([]);
   const [relays, setRelays] = useState<string[]>([]);
+
+  // Auto-populate relays from the user's NIP-65 relays.
+  // Only set a default when the user hasn't typed anything yet.
+  // (Avoid clobbering manual edits.)
+  useEffect(() => {
+    if (relays.length > 0) return;
+    if (!defaultRelays || defaultRelays.length === 0) return;
+    setRelays(defaultRelays);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defaultRelays.join("|")]);
 
   const handleKeyPackageSelect = async (keyPackageId: string) => {
     if (!keyPackageStore || !keyPackageId) {
@@ -114,10 +127,20 @@ function ConfigurationForm({
 
         // Create credential and key package
         const credential = createCredential(account.pubkey);
-        keyPackageToUse = await generateKeyPackage({
+        const generated = await generateKeyPackage({
           credential,
           ciphersuiteImpl,
         });
+
+        // Persist locally so we have the private init_key material when a Welcome arrives.
+        // Without this, Join may fail with: "No matching KeyPackage found in local store".
+        try {
+          await keyPackageStore.add(generated);
+        } catch {
+          // Best-effort: do not block group creation.
+        }
+
+        keyPackageToUse = generated;
       } catch (err) {
         return;
       }
@@ -263,6 +286,7 @@ function ConfigurationForm({
 
 export default withSignIn(function GroupCreation() {
   const client = useObservable(marmotClient$);
+  const mailboxes = useObservable(mailboxes$);
   const keyPackageStore = useObservable(keyPackageStore$);
   const keyPackages =
     useObservableMemo(
@@ -342,6 +366,11 @@ export default withSignIn(function GroupCreation() {
           keyPackages={keyPackages}
           keyPackageStore={keyPackageStore}
           isCreating={isCreating}
+          defaultRelays={
+            mailboxes?.outboxes?.length
+              ? mailboxes.outboxes
+              : (mailboxes?.inboxes ?? [])
+          }
           onSubmit={handleFormSubmit}
         />
       )}

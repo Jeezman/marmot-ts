@@ -18,17 +18,6 @@ const DEFAULT_LOOKUP_RELAYS = [
   "wss://index.hzrd149.com/",
 ];
 
-const DEFAULT_EXTRA_RELAYS = relaySet([
-  "wss://relay.damus.io",
-  "wss://nos.lol",
-  "wss://relay.primal.net",
-  "wss://nostr.wine",
-  "wss://relay.snort.social",
-]);
-
-export const extraRelays$ = new BehaviorSubject<string[]>(DEFAULT_EXTRA_RELAYS);
-persist("extra-relays", extraRelays$);
-
 export const lookupRelays$ = new BehaviorSubject<string[]>(
   DEFAULT_LOOKUP_RELAYS,
 );
@@ -38,16 +27,9 @@ persist("lookup-relays", lookupRelays$);
 export const manualRelays$ = new BehaviorSubject<string[]>([]);
 
 // Combined relay configuration observable
-export const relayConfig$ = combineLatest([
-  lookupRelays$,
-  extraRelays$,
-  manualRelays$,
-]).pipe(
-  map(([lookupRelays, extraRelays, manualRelays]) => ({
+export const relayConfig$ = combineLatest([lookupRelays$, manualRelays$]).pipe(
+  map(([lookupRelays, manualRelays]) => ({
     lookupRelays,
-    extraRelays,
     manualRelays,
-    // Keep commonRelays for backward compatibility during transition
-    commonRelays: extraRelays,
   })),
 );

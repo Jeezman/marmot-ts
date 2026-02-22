@@ -14,6 +14,7 @@ import {
 } from "../utils/encoding.js";
 import { unixNow } from "../utils/nostr.js";
 import { WELCOME_EVENT_KIND } from "./protocol.js";
+import { getKeyPackageRefFromKeyPackageEvent } from "./key-package-event.js";
 
 /**
  * Creates a welcome rumor (kind 444) for a welcome message.
@@ -29,10 +30,12 @@ export function createWelcomeRumor({
   author,
   groupRelays,
   keyPackageEventId,
+  keyPackageEvent,
 }: {
   welcome: Welcome;
   author: string;
   keyPackageEventId?: string;
+  keyPackageEvent?: NostrEvent;
   groupRelays: string[];
 }): Rumor {
   // Serialize the welcome message according to RFC 9420
@@ -52,6 +55,17 @@ export function createWelcomeRumor({
 
   // Add the key package event ID if known
   if (keyPackageEventId) draft.tags.push(["e", keyPackageEventId]);
+
+  // Add the key package reference (MIP-00 "i" tag) if available.
+  // This helps UIs show an unambiguous identifier even when event ids differ by relay.
+  if (keyPackageEvent) {
+    try {
+      const refHex = getKeyPackageRefFromKeyPackageEvent(keyPackageEvent);
+      draft.tags.push(["i", refHex]);
+    } catch {
+      // Best-effort: keep rumor valid even if the key package event can't be decoded.
+    }
+  }
 
   // Calculate the event ID for the rumor
   const id = getEventHash(draft);
@@ -91,9 +105,7 @@ export function getWelcome(event: NostrEvent | Rumor): Welcome {
   }
   const encodingFormat = getEncodingTag(event);
   if (encodingFormat !== "base64") {
-    throw new Error(
-      "Invalid welcome event: missing encoding=base64 tag",
-    );
+    throw new Error("Invalid welcome event: missing encoding=base64 tag");
   }
   const content = decodeContent(event.content, encodingFormat);
   const welcome = decode(welcomeDecoder, content);
