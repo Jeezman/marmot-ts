@@ -1,5 +1,5 @@
 [submodule "marmot"]
-	path = marmot
+	path = references/marmot
 	url = https://github.com/marmot-protocol/marmot
 [submodule "ts-mls"]
 	path = references/ts-mls

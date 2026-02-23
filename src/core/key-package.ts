@@ -96,7 +96,9 @@ export async function generateKeyPackage({
     // Marmot requires support for last_resort capability signaling (MIP-00),
     // but individual KeyPackages may be single-use or last-resort reusable.
     // `isLastResort` controls whether this KeyPackage is marked reusable.
-    extensions: isLastResort ? ensureLastResortExtension(extensions ?? []) : extensions,
+    extensions: isLastResort
+      ? ensureLastResortExtension(extensions ?? [])
+      : extensions,
     cipherSuite: ciphersuiteImpl,
   });
 }

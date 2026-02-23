@@ -72,7 +72,7 @@ describe("exports", () => {
         "getKeyPackageExtensions",
         "getKeyPackageMLSVersion",
         "getKeyPackageNostrPubkey",
-        "getKeyPackageRefFromKeyPackageEvent",
+        "getKeyPackageReference",
         "getKeyPackageRelayList",
         "getKeyPackageRelays",
         "getMarmotGroupDataExtensionBytes",
