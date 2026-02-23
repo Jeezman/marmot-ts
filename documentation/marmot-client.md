@@ -113,8 +113,11 @@ The client acts as the central router for accessing encrypted `MarmotGroup` inst
 // 1. Create a brand new group
 const group = await client.createGroup("Engineering Team", {
   description: "Dev ops.",
-  adminPubkeys: [myPubkey],
   relays: ["wss://relay.a", "wss://relay.b"],
+  // Optional: add additional admins (the creator is always included automatically)
+  adminPubkeys: ["<other-admin-pubkey-hex>"],
+  // Optional: override MLS ciphersuite
+  ciphersuite: "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
 });
 
 // 2. Load a previously saved group from the bytes-first backend

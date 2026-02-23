@@ -63,15 +63,14 @@ const network: NostrNetworkInterface = {
     return [];
   },
   subscription: (relays, filters) => {
-    // Returns a Subscribable<NostrEvent> that emits events matching the filters
-    // Implementers should return an object with a subscribe method that
-    // yields NostrEvent objects to the observer
+    // Returns a Subscribable<NostrEvent> that emits events matching the filters.
+    // Implementers should return an object with a subscribe(observer) method.
     return {
       subscribe: (observer) => {
-        // Implement real-time subscription logic here
-        // Call observer.next(event) when events are received
-        // Call observer.error(err) on errors
-        // Call observer.complete() when subscription ends
+        // Implement real-time subscription logic here.
+        // Call observer.next?.(event) when events are received.
+        // Call observer.error?.(err) on errors.
+        // Call observer.complete?.() when subscription ends.
         return {
           unsubscribe: () => {
             // Implement cleanup logic here
@@ -110,7 +109,6 @@ const client = new MarmotClient({
 // Create your first group!
 const group = await client.createGroup("Welcome to Marmot", {
   description: "Secure comms.",
-  adminPubkeys: [await yourApplesauceSigner.getPublicKey()],
   relays: ["wss://relay.example.com"],
 });
 ```

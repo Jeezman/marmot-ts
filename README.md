@@ -57,18 +57,21 @@ import { MarmotClient, KeyValueGroupStateBackend, KeyPackageStore } from "@inter
 const groupStateBackend = new KeyValueGroupStateBackend(/* ... */);
 const keyPackageStore = new KeyPackageStore(/* ... */);
 
-const client = new MarmotClient({
-  signer: yourNostrSigner,
-  groupStateBackend,
-  keyPackageStore,
-  network: /* NostrNetworkInterface */,
-});
+  const client = new MarmotClient({
+    signer: yourNostrSigner,
+    groupStateBackend,
+    keyPackageStore,
+    network: /* NostrNetworkInterface */,
+  });
 
-const group = await client.createGroup("My Secret Group", {
-  description: "A private discussion",
-  adminPubkeys: [myPubkey],
-  relays: ["wss://relay.example.com"],
-});
+  const group = await client.createGroup("My Secret Group", {
+    description: "A private discussion",
+    relays: ["wss://relay.example.com"],
+    // Optional: add additional admins (the creator is always included automatically)
+    adminPubkeys: ["<other-admin-pubkey-hex>"],
+    // Optional: override MLS ciphersuite
+    ciphersuite: "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
+  });
 ```
 
 See [Getting Started](documentation/getting-started.md) and [Examples](documentation/examples.md) for full usage instructions.

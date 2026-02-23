@@ -21,10 +21,10 @@ The Marmot Protocol dictates how standard MLS constructs are transmitted securel
 
 ### 1. Key Packages (Identities and Keys - MIP-02)
 
-In MLS, participants advertise "Key Packages" allowing others to unilaterally add them to groups asynchronously. In Nostr, `marmot-ts` publishes these packages as parameterised replaceable events:
+In MLS, participants advertise "Key Packages" allowing others to unilaterally add them to groups asynchronously. In Nostr, `marmot-ts` publishes these packages as events (Kind `443`) whose content is the base64-encoded MLS KeyPackage.
 
 - **Event Kind:** `443` (Marmot Key Package)
-- **Tags:** `"mls_protocol_version"`, `"ciphersuite"`.
+- **Tags:** `"mls_protocol_version"`, `"mls_ciphersuite"`, plus `"encoding"` (must be `base64`).
 - **Content:** The base64-encoded bytes of the MLS Key Package.
 
 ### 2. Group Events (Network Transport - MIP-01)
@@ -43,7 +43,7 @@ When an admin creates a group and adds participants, MLS generates a "Welcome" m
 
 - **Transport:** Standard Nostr Gift Wraps (NIP-59 / Kind `1059`).
 - **Rumor Kind:** `444` (Marmot Group Welcome Message).
-- **Process:** The admin fetches a participant's `443` Key Package, generates the `444` Welcome, and wraps it in a NIP-59 payload directed at the user's NIP-65 inbox relays. The invited user decrypts the `1059` and uses `client.joinGroupFromWelcome(rumor)`.
+- **Process:** The admin fetches a participant's `443` Key Package, generates the `444` Welcome, and wraps it in a NIP-59 payload directed at the user's NIP-65 inbox relays. The invited user decrypts the `1059` and uses `client.joinGroupFromWelcome({ welcomeRumor })`.
 
 ---
 
