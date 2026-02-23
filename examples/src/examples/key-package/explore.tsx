@@ -1,10 +1,9 @@
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { mapEventsToTimeline } from "applesauce-core";
-import { relaySet } from "applesauce-core/helpers";
 import { onlyEvents } from "applesauce-relay";
 import { useMemo, useState } from "react";
-import { combineLatest, of } from "rxjs";
-import { map, switchMap } from "rxjs/operators";
+import { of } from "rxjs";
+import { map } from "rxjs/operators";
 import {
   KeyPackage,
   keyPackageEncoder,

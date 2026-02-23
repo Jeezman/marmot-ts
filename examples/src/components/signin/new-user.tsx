@@ -9,7 +9,6 @@ import {
   colors,
   uniqueNamesGenerator,
 } from "unique-names-generator";
-import { createKeyPackageRelayListEvent } from "../../../../src";
 import { useObservable } from "../../hooks/use-observable";
 import accountManager from "../../lib/accounts";
 import { eventStore, pool } from "../../lib/nostr";

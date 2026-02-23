@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { useObservable } from "../../hooks/use-observable";
 import accountManager from "../../lib/accounts";
 import { UserAvatar, UserName } from "../nostr-user";

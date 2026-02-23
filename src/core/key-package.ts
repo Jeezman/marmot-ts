@@ -59,6 +59,15 @@ export type GenerateKeyPackageOptions = {
   capabilities?: Capabilities;
   lifetime?: Lifetime;
   extensions?: CustomExtension[];
+  /**
+   * Whether to mark this KeyPackage as reusable using the MLS `last_resort` extension.
+   *
+   * - `true`: include the `last_resort` KeyPackage extension (reusable; helps with race windows)
+   * - `false`: omit the extension (single-use; private init_key is expected to be consumed)
+   *
+   * Default: `true` for backwards compatibility with existing marmot-ts behavior.
+   */
+  isLastResort?: boolean;
   ciphersuiteImpl: CiphersuiteImpl;
 };
 
@@ -68,6 +77,7 @@ export async function generateKeyPackage({
   capabilities,
   lifetime,
   extensions,
+  isLastResort = true,
   ciphersuiteImpl,
 }: GenerateKeyPackageOptions): Promise<CompleteKeyPackage> {
   if (credential.credentialType !== defaultCredentialTypes.basic)
@@ -83,9 +93,14 @@ export async function generateKeyPackage({
       ? ensureMarmotCapabilities(capabilities)
       : defaultCapabilities(),
     lifetime: lifetime ?? createThreeMonthLifetime(),
-    extensions: extensions
-      ? ensureLastResortExtension(extensions)
-      : keyPackageDefaultExtensions(),
+    extensions: (() => {
+      const base = extensions ?? [];
+
+      // Marmot requires support for last_resort capability signaling (MIP-00),
+      // but individual KeyPackages may be single-use or last-resort reusable.
+      // `isLastResort` controls whether this KeyPackage is marked reusable.
+      return isLastResort ? ensureLastResortExtension(base) : base;
+    })(),
     cipherSuite: ciphersuiteImpl,
   });
 }

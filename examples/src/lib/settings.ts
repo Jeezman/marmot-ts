@@ -1,4 +1,3 @@
-import { relaySet } from "applesauce-core/helpers";
 import { BehaviorSubject, combineLatest, map } from "rxjs";
 
 // save and load settings from localStorage

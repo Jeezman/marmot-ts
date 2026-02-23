@@ -61,6 +61,10 @@ const credential = createCredential(myPubkey);
 const completeKeyPackage = await generateKeyPackage({
   credential,
   ciphersuiteImpl,
+  // Optional: control whether this KeyPackage is marked reusable.
+  // - true (default): include MLS `last_resort` extension
+  // - false: omit it (single-use)
+  isLastResort: true,
 });
 
 // 4. Create the unsigned NIP-01 EventTemplate (Kind 443)

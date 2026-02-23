@@ -325,9 +325,6 @@ function useRelayListManagement() {
       const signedEvent = await account.signEvent(draftEvent);
       console.log("Signed event:", signedEvent);
 
-      // Parse relay URLs from the signed event (these are the advertised relays)
-      const newRelays = getKeyPackageRelayList(signedEvent);
-
       // Publish replaceable metadata (kind 10051) to the user's NIP-65 outboxes.
       const allPublishingRelays = relaySet(mailboxes?.outboxes);
 
