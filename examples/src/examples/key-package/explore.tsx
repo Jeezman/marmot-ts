@@ -1,10 +1,9 @@
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { mapEventsToTimeline } from "applesauce-core";
-import { relaySet } from "applesauce-core/helpers";
 import { onlyEvents } from "applesauce-relay";
 import { useMemo, useState } from "react";
-import { combineLatest, of } from "rxjs";
-import { map, switchMap } from "rxjs/operators";
+import { of } from "rxjs";
+import { map } from "rxjs/operators";
 import {
   KeyPackage,
   keyPackageEncoder,
@@ -42,7 +41,7 @@ import { LeafNodeCapabilitiesSection } from "../../components/key-package/leaf-n
 import { UserAvatar, UserName } from "../../components/nostr-user";
 import { useObservable, useObservableMemo } from "../../hooks/use-observable";
 import { pool } from "../../lib/nostr";
-import { extraRelays$, relayConfig$ } from "../../lib/settings";
+import { relayConfig$ } from "../../lib/settings";
 
 const formatDate = (timestamp: number) => {
   return new Date(timestamp * 1000).toLocaleString();
@@ -329,33 +328,27 @@ function KeyPackageCard(props: { event: NostrEvent }) {
 export default function KeyPackageExplorer() {
   const relayConfig = useObservable(relayConfig$);
   const [selectedRelay, setSelectedRelay] = useState<string>(
-    relayConfig?.extraRelays?.[0] || relayConfig?.commonRelays?.[0] || "",
+    relayConfig?.lookupRelays?.[0] || "",
   );
   const [selectedUser, setSelectedUser] = useState<string>("all");
 
-  // Subscribe to key package events from relay (always include extra relays)
+  // Subscribe to key package events from the selected relay (debug view)
   const events = useObservableMemo(() => {
     // Return empty observable if selectedRelay is empty to avoid invalid relay requests
     if (!selectedRelay) {
       return of([]);
     }
 
-    return combineLatest([of(selectedRelay), extraRelays$]).pipe(
-      switchMap(([relay, extraRelays]) => {
-        // Combine selected relay with extra relays
-        const relaysToUse = relaySet([relay], extraRelays);
-        return pool
-          .subscription(relaysToUse, {
-            kinds: [KEY_PACKAGE_KIND],
-            limit: 100,
-          })
-          .pipe(
-            onlyEvents(),
-            mapEventsToTimeline(),
-            map((arr) => [...arr]),
-          );
-      }),
-    );
+    return pool
+      .subscription([selectedRelay], {
+        kinds: [KEY_PACKAGE_KIND],
+        limit: 100,
+      })
+      .pipe(
+        onlyEvents(),
+        mapEventsToTimeline(),
+        map((arr) => [...arr]),
+      );
   }, [selectedRelay]);
 
   // Get unique users from events with their counts

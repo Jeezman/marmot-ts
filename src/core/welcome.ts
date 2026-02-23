@@ -33,6 +33,7 @@ export function createWelcomeRumor({
   welcome: Welcome;
   author: string;
   keyPackageEventId?: string;
+  keyPackageEvent?: NostrEvent;
   groupRelays: string[];
 }): Rumor {
   // Serialize the welcome message according to RFC 9420
@@ -91,9 +92,7 @@ export function getWelcome(event: NostrEvent | Rumor): Welcome {
   }
   const encodingFormat = getEncodingTag(event);
   if (encodingFormat !== "base64") {
-    throw new Error(
-      "Invalid welcome event: missing encoding=base64 tag",
-    );
+    throw new Error("Invalid welcome event: missing encoding=base64 tag");
   }
   const content = decodeContent(event.content, encodingFormat);
   const welcome = decode(welcomeDecoder, content);

@@ -27,7 +27,6 @@ import { useObservable, useObservableMemo } from "../../hooks/use-observable";
 import accounts, { keyPackageRelays$, mailboxes$ } from "../../lib/accounts";
 import { keyPackageStore$ } from "../../lib/key-package-store";
 import { eventStore, pool } from "../../lib/nostr";
-import { extraRelays$ } from "../../lib/settings";
 import { getCiphersuiteNameFromId } from "../../lib/ciphersuite";
 
 // ============================================================================
@@ -35,14 +34,13 @@ import { getCiphersuiteNameFromId } from "../../lib/ciphersuite";
 // ============================================================================
 
 /** Observable of all available relays */
-const relays$ = combineLatest([
-  mailboxes$,
-  keyPackageRelays$,
-  extraRelays$,
-]).pipe(
-  map(([mailboxes, keyPackageRelays, extraRelays]) =>
-    relaySet(mailboxes?.outboxes, keyPackageRelays, extraRelays),
-  ),
+const relays$ = combineLatest([mailboxes$, keyPackageRelays$]).pipe(
+  map(([mailboxes, keyPackageRelays]) => {
+    // Key packages are discovered/published via the key package relay list (10051).
+    // We still include NIP-65 outboxes to improve discovery reliability.
+    // (No silent fallbacks in publishing flows elsewhere.)
+    return relaySet(mailboxes?.outboxes, keyPackageRelays);
+  }),
 );
 
 /** Observable of current user's key packages from all available relays */
@@ -675,7 +673,7 @@ function KeyPackageManager() {
 
       if (!relays || relays.length === 0)
         throw new Error(
-          "No relays available for publishing deletion event. Please configure your relay list or add manual relays.",
+          "No relays available for publishing deletion event. Configure kind 10051 (and NIP-65 outboxes) first.",
         );
 
       const eventsToDelete = confirmDialog.events;
@@ -769,8 +767,8 @@ function KeyPackageManager() {
         ) : (
           <div className="alert alert-warning">
             <span>
-              No key package relay list found. Please configure your relay list
-              (kind 10051) or add a manual relay to see your key packages.
+              No key package relay list (kind 10051) found. Configure it here:{" "}
+              <a href="#key-package/relay-list">key package relay list</a>.
             </span>
           </div>
         )}

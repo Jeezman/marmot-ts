@@ -490,9 +490,15 @@ export class MarmotClient<
             LAST_RESORT_KEY_PACKAGE_EXTENSION_TYPE,
       );
 
-      if (isLastResort && !keyPackageEventId) {
+      if (isLastResort) {
+        // MIP-00: last_resort key packages must retain their private init_key
+        // material as long as the KeyPackage may still be needed to decrypt
+        // other Welcomes (race window).
+        //
+        // Deletion should happen when the last_resort KeyPackage is rotated and
+        // unpublished, not immediately on first successful join.
         console.warn(
-          "[MarmotClient.joinGroupFromWelcome] Consumed KeyPackage had last_resort extension and no event id; retaining local private material per MIP-00",
+          "[MarmotClient.joinGroupFromWelcome] Consumed KeyPackage had last_resort extension; retaining local private material per MIP-00",
         );
       } else {
         await this.keyPackageStore.remove(consumedKeyPackageRef);
@@ -520,9 +526,9 @@ export class MarmotClient<
     this.emit("groupJoined", group);
 
     // MIP-00: best-effort request to delete the relay-published KeyPackage event.
-    // Even if the KeyPackage has last_resort, implementations typically rotate/
-    // unpublish after a successful join; in that common case, requesting relay
-    // deletion is still appropriate.
+    // This is emitted whenever we have an event id (relay distribution).
+    // Note: even if the KeyPackage is last_resort, many implementations rotate/
+    // unpublish after a successful join.
     if (keyPackageEventId) {
       this.emit("keyPackageRelayDeleteRequested", { keyPackageEventId });
     }
@@ -668,6 +674,8 @@ export class MarmotClient<
     client?: string;
     oldEventIds?: string[];
     ciphersuite?: CiphersuiteName;
+    /** Whether the created KeyPackage should include the MLS `last_resort` extension (default: true). */
+    isLastResort?: boolean;
     /** Whether to include the NIP-70 protected tag on the new key package event */
     protected?: boolean;
   }): Promise<{
@@ -678,10 +686,11 @@ export class MarmotClient<
 
     // Generate a new key package with fresh init keys
     const pubkey = await this.signer.getPublicKey();
-    const credential = await createCredential(pubkey);
+    const credential = createCredential(pubkey);
     const keyPackage = await generateKeyPackage({
       credential,
       ciphersuiteImpl,
+      isLastResort: options?.isLastResort,
     });
 
     // Store the private material locally
@@ -694,9 +703,6 @@ export class MarmotClient<
       client: options?.client,
       protected: options?.protected,
     });
-
-    // Store the private material locally
-    await this.keyPackageStore.add(keyPackage);
 
     // Build a NIP-09 delete event for old key packages if IDs are provided
     let deleteEvent: EventTemplate | undefined;

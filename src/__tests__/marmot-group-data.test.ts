@@ -5,7 +5,6 @@ import {
   clientStateEncoder,
   createGroup,
   decode,
-  defaultCredentialTypes,
   encode,
   getCiphersuiteImpl,
   unsafeTestingAuthenticationService,

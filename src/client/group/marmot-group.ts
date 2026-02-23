@@ -100,6 +100,8 @@ export type WelcomeRecipient = {
   pubkey: string;
   /** The ID of KeyPackage event (kind 443) used for add operation */
   keyPackageEventId: string;
+  /** The KeyPackage event (kind 443) used for add operation */
+  keyPackageEvent: NostrEvent;
 };
 
 /**
@@ -622,6 +624,7 @@ export class MarmotGroup<
             author: actorPubkey,
             groupRelays: groupData.relays,
             keyPackageEventId: recipient.keyPackageEventId,
+            keyPackageEvent: recipient.keyPackageEvent,
           });
 
           // Gift wrap the welcome event to the newly added user
@@ -756,6 +759,7 @@ export class MarmotGroup<
         {
           pubkey: keyPackageEvent.pubkey,
           keyPackageEventId: keyPackageEvent.id,
+          keyPackageEvent,
         },
       ],
     });

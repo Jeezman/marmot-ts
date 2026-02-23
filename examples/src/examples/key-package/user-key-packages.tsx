@@ -26,7 +26,6 @@ import QRButton from "../../components/qr-button";
 import { useObservable, useObservableMemo } from "../../hooks/use-observable";
 import accounts, { keyPackageRelays$ } from "../../lib/accounts";
 import { eventStore, pool } from "../../lib/nostr";
-import { extraRelays$ } from "../../lib/settings";
 
 const formatDate = (timestamp: number) => {
   return new Date(timestamp * 1000).toLocaleString();
@@ -261,19 +260,17 @@ export default function UserKeyPackages() {
     selectedPubkey$.next(null);
   };
 
-  // Step 2: Fetch key packages from those relays (always include extra relays)
+  // Step 2: Fetch key packages from those relays
   const keyPackages = useObservableMemo(
     () =>
-      combineLatest([selectedPubkey$, keyPackageRelays$, extraRelays$]).pipe(
-        switchMap(([pubkey, keyPackageRelays, extraRelays]) => {
+      combineLatest([selectedPubkey$, keyPackageRelays$]).pipe(
+        switchMap(([pubkey, keyPackageRelays]) => {
           if (!pubkey) return of([]);
 
-          // Always include extra relays when fetching events
           const relays = relaySet(
             keyPackageRelays && keyPackageRelays.length > 0
               ? keyPackageRelays
               : [],
-            extraRelays,
           );
 
           return pool

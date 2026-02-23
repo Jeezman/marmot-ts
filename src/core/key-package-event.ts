@@ -280,3 +280,19 @@ export function getKeyPackageNostrPubkey(event: NostrEvent): string {
 
   return getCredentialPubkey(keyPackage.leafNode.credential);
 }
+
+/**
+ * Returns the KeyPackageRef (MIP-00 `i` tag value) from a kind 443 KeyPackage event.
+ *
+ * Per MIP-00, new events MUST include this tag. Older events may not.
+ */
+export function getKeyPackageReference(event: NostrEvent): string | undefined {
+  if (event.kind !== KEY_PACKAGE_KIND) {
+    throw new Error(
+      `Event ${event.id} is not a key package event (kind ${event.kind} instead of ${KEY_PACKAGE_KIND})`,
+    );
+  }
+  const ref = getTagValue(event, "i");
+
+  return ref;
+}

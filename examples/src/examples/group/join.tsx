@@ -10,10 +10,10 @@ import { getWelcome } from "../../../../src/core/welcome";
 import { getCiphersuiteNameFromId } from "../../lib/ciphersuite";
 import { withSignIn } from "../../components/with-signIn";
 import { useObservable, useObservableMemo } from "../../hooks/use-observable";
-import accounts from "../../lib/accounts";
-import { marmotClient$ } from "../../lib/marmot-client";
+import accounts, { mailboxes$ } from "../../lib/accounts";
+import { getSubscriptionManager, marmotClient$ } from "../../lib/marmot-client";
 import { pool } from "../../lib/nostr";
-import { extraRelays$ } from "../../lib/settings";
+import { triggerGroupStoreRefresh } from "../../lib/groups";
 import { Rumor, unlockGiftWrap } from "applesauce-common/helpers";
 
 // ============================================================================
@@ -25,6 +25,7 @@ interface WelcomeMessage {
   welcomeRumor: Rumor;
   relays: string[];
   keyPackageEventId?: string;
+  keyPackageRef?: string;
   cipherSuite?: CiphersuiteId;
   timestamp: number;
 }
@@ -164,6 +165,14 @@ function WelcomeDetails({ welcome }: { welcome: WelcomeMessage }) {
               </span>
             </div>
           )}
+          {welcome.keyPackageRef && (
+            <div>
+              <span className="font-semibold">KeyPackageRef (i):</span>{" "}
+              <span className="font-mono text-sm">
+                {welcome.keyPackageRef.slice(0, 16)}...
+              </span>
+            </div>
+          )}
           <div>
             <span className="font-semibold">Received:</span>{" "}
             {new Date(welcome.timestamp * 1000).toLocaleString()}
@@ -247,9 +256,14 @@ function ResultsDisplay({
       </div>
 
       <div className="flex justify-end">
-        <button className="btn btn-outline" onClick={onReset}>
-          Join Another Group
-        </button>
+        <div className="flex gap-2">
+          <a className="btn btn-primary" href="#group/chat">
+            Go to group chat
+          </a>
+          <button className="btn btn-outline" onClick={onReset}>
+            Join Another Group
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -262,6 +276,7 @@ function ResultsDisplay({
 export default withSignIn(function JoinGroup() {
   const client = useObservable(marmotClient$);
   const account = accounts.active;
+  const mailboxes = useObservable(mailboxes$);
 
   const refreshCount = useObservable(refreshTrigger$) ?? 0;
 
@@ -270,18 +285,20 @@ export default withSignIn(function JoinGroup() {
     useObservableMemo(() => {
       if (!account) return of([]);
 
-      const relays = relaySet([], extraRelays$.value);
-
+      // Giftwraps (kind 1059) should be fetched from the user's inbox relays (NIP-65 "read").
+      const relays = relaySet(mailboxes?.inboxes ?? []);
+      console.log("Fetching gift wraps from", relays);
       return pool
         .request(relays, {
           kinds: [1059], // NIP-59 gift wrap
+          "#p": [account.pubkey],
           limit: 50,
         })
         .pipe(
           mapEventsToTimeline(),
           map((arr) => [...arr]),
         );
-    }, [account, refreshCount]) ?? [];
+    }, [account, refreshCount, mailboxes]) ?? [];
 
   // Process gift wraps to extract Welcome messages
   const welcomeMessages =
@@ -320,6 +337,7 @@ export default withSignIn(function JoinGroup() {
                     keyPackageEventId: rumor.tags.find(
                       (t) => t[0] === "e",
                     )?.[1],
+                    keyPackageRef: rumor.tags.find((t) => t[0] === "i")?.[1],
                     cipherSuite,
                     timestamp: giftWrap.created_at,
                   });
@@ -369,6 +387,17 @@ export default withSignIn(function JoinGroup() {
         welcomeRumor: selectedWelcome.welcomeRumor,
         keyPackageEventId: selectedWelcome.keyPackageEventId,
       });
+
+      // Ensure the group list reacts immediately across routes.
+      triggerGroupStoreRefresh();
+
+      // Ensure background subscriptions are started for the newly joined group.
+      // Without this, the user may need a refresh before receiving group messages.
+      getSubscriptionManager()
+        ?.reconcileSubscriptions()
+        .catch((err) => {
+          console.error("Failed to reconcile subscriptions after join:", err);
+        });
 
       const marmotData = extractMarmotGroupData(group.state);
       const groupName = marmotData?.name ?? "(unknown group name)";
