@@ -93,14 +93,10 @@ export async function generateKeyPackage({
       ? ensureMarmotCapabilities(capabilities)
       : defaultCapabilities(),
     lifetime: lifetime ?? createThreeMonthLifetime(),
-    extensions: (() => {
-      const base = extensions ?? [];
-
-      // Marmot requires support for last_resort capability signaling (MIP-00),
-      // but individual KeyPackages may be single-use or last-resort reusable.
-      // `isLastResort` controls whether this KeyPackage is marked reusable.
-      return isLastResort ? ensureLastResortExtension(base) : base;
-    })(),
+    // Marmot requires support for last_resort capability signaling (MIP-00),
+    // but individual KeyPackages may be single-use or last-resort reusable.
+    // `isLastResort` controls whether this KeyPackage is marked reusable.
+    extensions: isLastResort ? ensureLastResortExtension(extensions ?? []) : extensions,
     cipherSuite: ciphersuiteImpl,
   });
 }
