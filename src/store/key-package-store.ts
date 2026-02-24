@@ -5,6 +5,39 @@ import { calculateKeyPackageRef } from "../core/key-package.js";
 import { KeyValueStoreBackend } from "../utils/key-value.js";
 import { EventEmitter } from "eventemitter3";
 
+/**
+ * A single publish record for a key package — one entry per kind 443 Nostr event.
+ *
+ * Multiple records can exist for the same key package ref if the same key package
+ * was published more than once (e.g. to different relay sets or by different devices).
+ */
+export type PublishedKeyPackageRecord = {
+  /** The Nostr event ID of the kind 443 event */
+  eventId: string;
+  /** The relay URLs this event was published to */
+  relays: string[];
+  /** Unix timestamp (seconds) when this record was created locally */
+  publishedAt: number;
+};
+
+/**
+ * Backend type for the published key package store.
+ *
+ * Keys are keyPackageRef hex strings. Values are arrays of publish records.
+ * Apps can implement this with any storage engine (localForage, IndexedDB,
+ * in-memory Map, etc.) by satisfying the {@link KeyValueStoreBackend} interface.
+ *
+ * @example
+ * ```typescript
+ * // Using an in-memory backend
+ * const backend: PublishedKeyPackageStoreBackend = new MemoryBackend();
+ * const manager = new KeyPackageManager({ ..., publishedKeyPackageStore: backend });
+ * ```
+ */
+export type PublishedKeyPackageStoreBackend = KeyValueStoreBackend<
+  PublishedKeyPackageRecord[]
+>;
+
 export type StoredKeyPackage = {
   /** The calculated key package reference (should be used to identify the key package) */
   keyPackageRef: Uint8Array;
@@ -17,7 +50,7 @@ export type StoredKeyPackage = {
 /** A type for listing the key package without the private package */
 export type ListedKeyPackage = Omit<StoredKeyPackage, "privatePackage">;
 
-/** A generic interface for a key-value store */
+/** Backend interface for the key package store */
 export interface KeyPackageStoreBackend extends KeyValueStoreBackend<StoredKeyPackage> {}
 
 /** Options for creating a {@link KeyPackageStore} instance */
@@ -36,8 +69,8 @@ type KeyPackageStoreEvents = {
 /**
  * Stores key packages in a {@link KeyPackageStoreBackend}.
  *
- * This class provides a simple interface for managing complete key packages, including their private components.
- * It's designed to work with any backend that implements the {@link KeyPackageStoreBackend} interface.
+ * Manages private key material only — publish tracking is handled separately
+ * by {@link PublishedKeyPackageStore}.
  *
  * @example
  * ```typescript
@@ -47,11 +80,10 @@ type KeyPackageStoreEvents = {
  * await store.add({ publicPackage, privatePackage });
  * // List all key packages
  * const packages = await store.list();
- * // Get a specific key package by its publicKey
- * const publicPackage = await store.getPublicKey(publicKey);
- * const privatePackage = await store.getPrivateKey(publicKey);
+ * // Get a specific key package by its ref
+ * const privatePackage = await store.getPrivateKey(ref);
  * // Remove a key package
- * await store.remove(publicPackage);
+ * await store.remove(ref);
  * ```
  */
 export class KeyPackageStore extends EventEmitter<KeyPackageStoreEvents> {
@@ -80,14 +112,11 @@ export class KeyPackageStore extends EventEmitter<KeyPackageStoreEvents> {
     hashOrPackage: Uint8Array | string | KeyPackage,
   ): Promise<string> {
     if (typeof hashOrPackage === "string") {
-      // Already a hex string
       return hashOrPackage;
     }
     if (hashOrPackage instanceof Uint8Array) {
-      // Convert Uint8Array to hex
       return bytesToHex(hashOrPackage);
     }
-    // Calculate the key package reference from the public package
     return bytesToHex(
       await calculateKeyPackageRef(hashOrPackage, this.cryptoProvider),
     );
@@ -97,7 +126,6 @@ export class KeyPackageStore extends EventEmitter<KeyPackageStoreEvents> {
   private async ensureKeyPackageRef<T extends { publicPackage: KeyPackage }>(
     keyPackage: T,
   ): Promise<T & { keyPackageRef: Uint8Array }> {
-    // Skip calculation if the key package reference is already present
     if (
       "keyPackageRef" in keyPackage &&
       keyPackage.keyPackageRef instanceof Uint8Array
@@ -118,21 +146,13 @@ export class KeyPackageStore extends EventEmitter<KeyPackageStoreEvents> {
    *
    * @param keyPackage - The complete key package containing both public and private components
    * @returns A promise that resolves to the storage key used
-   *
-   * @example
-   * ```typescript
-   * const keyPackage = await marmot.createKeyPackage(credential);
-   * const key = await store.add(keyPackage);
-   * console.log(`Stored key package with key: ${key}`);
-   * ```
    */
   async add(
     keyPackage: Omit<StoredKeyPackage, "keyPackageRef">,
   ): Promise<string> {
     const key = await this.resolveStorageKey(keyPackage.publicPackage);
 
-    // Serialize the key package for storage
-    const serialized = {
+    const serialized: StoredKeyPackage = {
       keyPackageRef: await calculateKeyPackageRef(
         keyPackage.publicPackage,
         this.cryptoProvider,
@@ -151,9 +171,6 @@ export class KeyPackageStore extends EventEmitter<KeyPackageStoreEvents> {
 
   /**
    * Retrieves only the public key package from the store.
-   *
-   * This method is useful when you only need the public component and want to avoid
-   * loading the private key into memory.
    *
    * @param ref - The key package reference (as Uint8Array or hex string) or the public key package
    * @returns A promise that resolves to the public key package, or null if not found
@@ -212,8 +229,8 @@ export class KeyPackageStore extends EventEmitter<KeyPackageStoreEvents> {
   }
 
   /**
-   * Lists all public key packages stored in the store.
-   * @returns An array of public key packages
+   * Lists all key packages stored in the store (without private material).
+   * @returns An array of listed key packages
    */
   async list(): Promise<ListedKeyPackage[]> {
     const allKeys = await this.backend.keys();
@@ -226,11 +243,9 @@ export class KeyPackageStore extends EventEmitter<KeyPackageStoreEvents> {
       ),
     );
 
-    // Filter out null values and validate that items are CompleteKeyPackages
     return packages
       .filter((pkg) => pkg !== null)
       .map((pkg) => ({
-        // NOTE: Explicicly omit the private key package here since in most cases clients will not need it for listing stored key packages
         keyPackageRef: pkg.keyPackageRef,
         publicPackage: pkg.publicPackage,
       }));
