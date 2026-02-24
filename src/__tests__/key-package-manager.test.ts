@@ -703,7 +703,7 @@ describe("KeyPackageManager", () => {
 
       const all = await manager.list();
       expect(all).toHaveLength(2);
-      expect(all.filter((p) => p.publishedEvents.length > 0)).toHaveLength(1);
+      expect(all.filter((p) => p.published.length > 0)).toHaveLength(1);
     });
 
     it("tracked foreign ref (no private key) does not appear in list()", async () => {
@@ -768,7 +768,7 @@ describe("KeyPackageManager", () => {
       await gen.return(undefined);
 
       expect(value).toHaveLength(1);
-      expect(value[0].publishedEvents).toHaveLength(1);
+      expect(value[0].published).toHaveLength(1);
     });
 
     it("initial snapshot includes publishedEvents merged from published backend", async () => {
@@ -780,8 +780,8 @@ describe("KeyPackageManager", () => {
       await gen.return(undefined);
 
       expect(value[0].keyPackageRef).toEqual(pkg.keyPackageRef);
-      expect(value[0].publishedEvents).toHaveLength(1);
-      expect(value[0].publishedEvents[0].relays).toContain("wss://relay.test");
+      expect(value[0].published).toHaveLength(1);
+      expect(value[0].published[0].relays).toContain("wss://relay.test");
     });
 
     it("yields updated snapshot after a key package is added", async () => {
@@ -819,7 +819,7 @@ describe("KeyPackageManager", () => {
       await record;
       await gen.return(undefined);
 
-      expect(value[0].publishedEvents).toHaveLength(2);
+      expect(value[0].published).toHaveLength(2);
     });
 
     it("yields updated snapshot after a key package is removed", async () => {

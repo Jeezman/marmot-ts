@@ -102,7 +102,7 @@ type KeyPackageManagerEvents = {
  *
  * // List all key packages, filtering to those with published events
  * const published = (await client.keyPackages.list())
- *   .filter(p => p.publishedEvents.length > 0);
+ *   .filter(p => p.published.length > 0);
  * ```
  */
 export class KeyPackageManager extends EventEmitter<KeyPackageManagerEvents> {
@@ -458,7 +458,7 @@ export class KeyPackageManager extends EventEmitter<KeyPackageManagerEvents> {
    * ```ts
    * for await (const packages of client.keyPackages.watchKeyPackages()) {
    *   console.log(`${packages.length} key packages, ` +
-   *     `${packages.filter(p => p.publishedEvents.length > 0).length} published`);
+   *     `${packages.filter(p => p.published.length > 0).length} published`);
    * }
    * ```
    */
