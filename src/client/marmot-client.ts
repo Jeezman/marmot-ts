@@ -8,34 +8,41 @@ import {
   ClientState,
   CryptoProvider,
   defaultCryptoProvider,
+  GroupInfo,
   joinGroup,
   KeyPackage,
   PrivateKeyPackage,
+  Welcome,
 } from "ts-mls";
 import { CiphersuiteName, ciphersuites } from "ts-mls/crypto/ciphersuite.js";
 import { marmotAuthService } from "../core/auth-service.js";
-import { createCredential } from "../core/credential.js";
-import { defaultCapabilities } from "../core/default-capabilities.js";
-import { createSimpleGroup, SimpleGroupOptions } from "../core/group.js";
-import { generateKeyPackage } from "../core/key-package.js";
-import { LAST_RESORT_KEY_PACKAGE_EXTENSION_TYPE } from "../core/protocol.js";
-import { getWelcome } from "../core/welcome.js";
 import {
   deserializeClientState,
   serializeClientState,
   SerializedClientState,
 } from "../core/client-state.js";
+import { createCredential } from "../core/credential.js";
+import { defaultCapabilities } from "../core/default-capabilities.js";
+import { createSimpleGroup, SimpleGroupOptions } from "../core/group.js";
+import { generateKeyPackage } from "../core/key-package.js";
+import { isRumorLike } from "../core/nostr.js";
+import { LAST_RESORT_KEY_PACKAGE_EXTENSION_TYPE } from "../core/protocol.js";
+import {
+  getWelcome,
+  getWelcomeKeyPackageRefs,
+  readWelcomeGroupInfo,
+} from "../core/welcome.js";
 import {
   GroupStateStore,
   GroupStateStoreBackend,
 } from "../store/group-state-store.js";
 import { KeyPackageStore } from "../store/key-package-store.js";
-import { KeyPackageManager } from "./key-package-manager.js";
 import {
   BaseGroupHistory,
   GroupHistoryFactory,
   MarmotGroup,
 } from "./group/marmot-group.js";
+import { KeyPackageManager } from "./key-package-manager.js";
 import { NostrNetworkInterface } from "./nostr-interface.js";
 
 export type MarmotClientOptions<
@@ -326,6 +333,45 @@ export class MarmotClient<
     this.emit("groupCreated", group);
 
     return group;
+  }
+
+  /**
+   * Reads the {@link GroupInfo} from a Welcome rumor without joining the group.
+   *
+   * Finds the local key package that matches one of the welcome's recipient slots,
+   * then decrypts the group info using that key package. Useful for previewing
+   * group metadata (name, relays, admins) before deciding to join.
+   *
+   * @param welcomeRumor - The decrypted kind 444 welcome rumor
+   * @returns The decrypted GroupInfo, or null if no matching key package is found or decryption fails
+   */
+  async readInviteGroupInfo(
+    welcomeRumor: Rumor | Welcome,
+  ): Promise<GroupInfo | null> {
+    const welcome = isRumorLike(welcomeRumor)
+      ? getWelcome(welcomeRumor)
+      : welcomeRumor;
+    const refs = getWelcomeKeyPackageRefs(welcome);
+
+    for (const ref of refs) {
+      const stored = await this.keyPackages.get(ref);
+      if (!stored?.privatePackage) continue;
+
+      try {
+        const ciphersuiteImpl = await this.cryptoProvider.getCiphersuiteImpl(
+          stored.publicPackage.cipherSuite,
+        );
+        return await readWelcomeGroupInfo({
+          welcome,
+          keyPackage: stored,
+          ciphersuiteImpl,
+        });
+      } catch {
+        // Ignore error, try other key packages
+      }
+    }
+
+    return null;
   }
 
   /**
