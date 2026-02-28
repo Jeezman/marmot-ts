@@ -166,11 +166,10 @@ describe("End-to-end: invite, join, first message", () => {
       keyPackageEventId,
     });
 
-    // MIP-02: joiners SHOULD self-update immediately after Welcome.
-    // This advances the epoch by 1 compared to the admin state immediately
-    // after the invite commit.
+    // Invitee joins at the same epoch as admin (no automatic self-update).
+    // MIP-02 self-update is the caller's responsibility.
     expect(inviteeGroup.state.groupContext.epoch).toBe(
-      adminGroup.state.groupContext.epoch + 1n,
+      adminGroup.state.groupContext.epoch,
     );
 
     // MIP-00: last_resort key packages may be reused to handle race windows.
@@ -191,14 +190,8 @@ describe("End-to-end: invite, join, first message", () => {
       "#h": [nostrGroupIdHex],
     });
 
-    // Admin must ingest the joiner's post-join self-update commit to catch up.
-    for await (const _ of adminGroup.ingest(groupEvents)) {
-      // Drain iterator
-    }
-
-    // NOTE: joining from Welcome yields a state that already includes the
-    // invite commit and then performs a post-join self-update. Ingesting the
-    // backlog should be a no-op (but must not regress state or throw).
+    // Invitee ingests the group backlog (the invite commit). This should be a
+    // no-op since joining from Welcome already incorporates that commit.
     const inviteeEpochBeforeCatchup = inviteeGroup.state.groupContext.epoch;
     for await (const _ of inviteeGroup.ingest(groupEvents)) {
       // Drain iterator
@@ -207,7 +200,7 @@ describe("End-to-end: invite, join, first message", () => {
       inviteeEpochBeforeCatchup,
     );
 
-    // Verify both clients are at the same epoch
+    // Both clients are already at the same epoch — no self-update was sent.
     expect(inviteeGroup.state.groupContext.epoch).toBe(
       adminGroup.state.groupContext.epoch,
     );

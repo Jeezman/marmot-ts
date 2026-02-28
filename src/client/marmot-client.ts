@@ -533,20 +533,10 @@ export class MarmotClient<
       this.emit("keyPackageRelayDeleteRequested", { keyPackageEventId });
     }
 
-    // MIP-02 SHOULD: post-join self-update to rotate leaf key material for forward secrecy.
-    // This is REQUIRED within 24 hours (MIP-02), and recommended immediately.
-    try {
-      await group.selfUpdate();
-      console.log(
-        `[MarmotClient.joinGroupFromWelcome] Post-join self-update commit sent`,
-      );
-    } catch (err) {
-      // Best-effort — failure to self-update is non-fatal.
-      console.warn(
-        `[MarmotClient.joinGroupFromWelcome] Post-join self-update failed:`,
-        err,
-      );
-    }
+    // MIP-02 SHOULD: callers are responsible for calling group.selfUpdate() after
+    // joining to rotate leaf key material for forward secrecy. Doing it automatically
+    // here caused the joining member to fork off to a new epoch before other members
+    // could ingest the commit.
 
     return group;
   }
