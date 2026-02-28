@@ -46,6 +46,8 @@ import { createWelcomeRumor } from "../../core/welcome.js";
 import { GroupStateStore } from "../../store/group-state-store.js";
 import { logger } from "../../utils/debug.js";
 import { createGiftWrap, hasAck } from "../../utils/index.js";
+import { unixNow } from "../../utils/nostr.js";
+import { getEventHash } from "nostr-tools";
 import { NoGroupRelaysError, NoMarmotGroupDataError } from "../errors.js";
 import { NostrNetworkInterface, PublishResponse } from "../nostr-interface.js";
 import { proposeInviteUser } from "./proposals/invite-user.js";
@@ -494,6 +496,40 @@ export class MarmotGroup<
     this.state = newState;
 
     return response;
+  }
+
+  /**
+   * Creates and sends a kind 9 chat message to the group.
+   *
+   * This is a convenience wrapper around {@link sendApplicationRumor} that constructs
+   * the rumor for you. The message is encrypted via MLS and published as a kind 445
+   * group event to the group's relays.
+   *
+   * @param content - The text content of the chat message
+   * @param tags - Optional Nostr tags to include on the rumor
+   * @returns Promise resolving to the publish response from the relays
+   *
+   * @example
+   * ```ts
+   * await group.sendChatMessage("Hello, group!");
+   * await group.sendChatMessage("Reply", [["e", replyToId]]);
+   * ```
+   */
+  async sendChatMessage(
+    content: string,
+    tags: string[][] = [],
+  ): Promise<Record<string, PublishResponse>> {
+    const pubkey = await this.signer.getPublicKey();
+    const rumor: Rumor = {
+      id: "",
+      kind: 9,
+      pubkey,
+      created_at: unixNow(),
+      content,
+      tags,
+    };
+    rumor.id = getEventHash(rumor);
+    return this.sendApplicationRumor(rumor);
   }
 
   /**
