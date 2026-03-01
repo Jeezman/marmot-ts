@@ -1,27 +1,26 @@
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { PrivateKeyAccount } from "applesauce-accounts/accounts";
 import { Rumor, unlockGiftWrap } from "applesauce-common/helpers/gift-wrap";
-import { getEventHash, type NostrEvent } from "nostr-tools";
+import { getEventHash, NostrEvent } from "applesauce-core/helpers";
 import {
   CiphersuiteImpl,
   defaultCryptoProvider,
   getCiphersuiteImpl,
 } from "ts-mls";
 import { beforeEach, describe, expect, it } from "vitest";
-
 import { MarmotClient } from "../client/marmot-client";
 import { extractMarmotGroupData } from "../core/client-state";
+import { deserializeApplicationData } from "../core/group-message";
 import {
   GROUP_EVENT_KIND,
   KEY_PACKAGE_KIND,
   WELCOME_EVENT_KIND,
 } from "../core/protocol";
-import { KeyPackageStore } from "../store/key-package-store";
 import { KeyValueGroupStateBackend } from "../store/adapters/key-value-group-state-backend";
+import { KeyPackageStore } from "../store/key-package-store";
 import { unixNow } from "../utils/nostr";
 import { MockNetwork } from "./helpers/mock-network";
 import { MemoryBackend } from "./ingest-commit-race.test";
-import { deserializeApplicationData } from "../core/group-message";
 
 // NOTE: we use the shared test helper MockNetwork, not an inline version.
 

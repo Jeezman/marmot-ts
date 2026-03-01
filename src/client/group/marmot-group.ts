@@ -1,9 +1,12 @@
 import type { Rumor } from "applesauce-common/helpers/gift-wrap";
 import type { EventSigner } from "applesauce-core/event-factory";
-import { bytesToHex, type NostrEvent } from "applesauce-core/helpers/event";
+import {
+  bytesToHex,
+  getEventHash,
+  type NostrEvent,
+} from "applesauce-core/helpers/event";
 import { Debugger } from "debug";
 import { EventEmitter } from "eventemitter3";
-import { getEventHash } from "nostr-tools";
 import {
   CiphersuiteImpl,
   ClientState,
@@ -35,8 +38,8 @@ import {
 import { getCredentialPubkey } from "../../core/credential.js";
 import {
   createGroupEvent,
-  GroupMessagePair,
   decryptGroupMessages,
+  GroupMessagePair,
   serializeApplicationRumor,
   sortGroupCommits,
 } from "../../core/group-message.js";
@@ -530,7 +533,9 @@ export class MarmotGroup<
         .map((r) => r.message)
         .join("; ");
       throw new Error(
-        `Failed to publish application message: ${errors || "no relay acknowledged"}`,
+        `Failed to publish application message: ${
+          errors || "no relay acknowledged"
+        }`,
       );
     }
 
@@ -759,7 +764,10 @@ export class MarmotGroup<
 
           if (inboxRelays.length === 0) {
             throw new Error(
-              `No relays available to send Welcome to recipient ${recipient.pubkey.slice(0, 16)}...`,
+              `No relays available to send Welcome to recipient ${recipient.pubkey.slice(
+                0,
+                16,
+              )}...`,
             );
           }
 
@@ -805,7 +813,9 @@ export class MarmotGroup<
           failureDetails,
         );
         throw new Error(
-          `Failed to deliver ${failureDetails.length}/${options.welcomeRecipients.length} Welcome message(s): ${failureDetails.join("; ")}`,
+          `Failed to deliver ${failureDetails.length}/${options.welcomeRecipients.length} Welcome message(s): ${failureDetails.join(
+            "; ",
+          )}`,
         );
       }
     }

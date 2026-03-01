@@ -1,13 +1,11 @@
 import { bytesToHex } from "@noble/hashes/utils.js";
-import { NostrEvent } from "applesauce-core/helpers/event";
-
-import { EventTemplate } from "nostr-tools";
+import { EventTemplate, NostrEvent } from "applesauce-core/helpers/event";
 import {
   CustomExtension,
-  KeyPackage,
   decode,
   defaultCredentialTypes,
   encode,
+  KeyPackage,
 } from "ts-mls";
 import { CiphersuiteId, ciphersuites } from "ts-mls/crypto/ciphersuite.js";
 import { greaseValues } from "ts-mls/grease.js";
@@ -47,15 +45,17 @@ export function createDeleteKeyPackageEvent(
   options: CreateDeleteKeyPackageEventOptions,
 ): EventTemplate {
   const { events } = options;
-  if (!events || events.length === 0)
+  if (!events || events.length === 0) {
     throw new Error("At least one event must be provided for deletion");
+  }
 
   const ids = events.map((e) => {
     if (typeof e === "string") return e;
-    if (e.kind !== KEY_PACKAGE_KIND)
+    if (e.kind !== KEY_PACKAGE_KIND) {
       throw new Error(
         `Event ${e.id} is not a key package event (kind ${e.kind} instead of ${KEY_PACKAGE_KIND})`,
       );
+    }
     return e.id;
   });
 
@@ -100,8 +100,9 @@ export function getKeyPackageCipherSuiteId(
   const id = parseInt(cipherSuite) as CiphersuiteId;
 
   // Verify that cipher suite is a valid ID
-  if (!(Object.values(ciphersuites) as number[]).includes(id))
+  if (!(Object.values(ciphersuites) as number[]).includes(id)) {
     throw new Error(`Invalid MLS cipher suite ID ${id}`);
+  }
 
   return id;
 }
@@ -179,7 +180,9 @@ async function createKeyPackageEventInternal(
 
   // Get the cipher suite from the key package
   // ts-mls v2: keyPackage.cipherSuite is a numeric id already
-  const ciphersuiteHex = `0x${keyPackage.cipherSuite.toString(16).padStart(4, "0")}`;
+  const ciphersuiteHex = `0x${keyPackage.cipherSuite
+    .toString(16)
+    .padStart(4, "0")}`;
 
   // Extract extension types from the key package extensions
   const extensionTypes = keyPackage.extensions.map((ext: CustomExtension) => {
@@ -264,10 +267,11 @@ export function getKeyPackageNostrPubkey(event: NostrEvent): string {
   if (
     keyPackage.leafNode.credential.credentialType !==
     defaultCredentialTypes.basic
-  )
+  ) {
     throw new Error(
       "Key package does not use a basic credential, cannot get nostr public key",
     );
+  }
 
   return getCredentialPubkey(keyPackage.leafNode.credential);
 }

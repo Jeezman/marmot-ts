@@ -4,22 +4,22 @@ import {
   generateSecretKey,
   getPublicKey,
   NostrEvent,
-} from "nostr-tools";
+} from "applesauce-core/helpers";
+import { contentTypes, decode, encode, wireformats } from "ts-mls";
 import { ClientState } from "ts-mls/clientState.js";
 import { CiphersuiteImpl } from "ts-mls/crypto/ciphersuite.js";
 import { mlsExporter } from "ts-mls/keySchedule.js";
-import { contentTypes, decode, encode, wireformats } from "ts-mls";
 import {
+  type MlsMessage,
   mlsMessageDecoder,
   mlsMessageEncoder,
-  type MlsMessage,
 } from "ts-mls/message.js";
-import { unixNow } from "../utils/nostr.js";
 import {
   decryptBytes,
   encryptBytes,
   getConversationKey,
 } from "../utils/nip44-binary.js";
+import { unixNow } from "../utils/nostr.js";
 import { getNostrGroupIdHex } from "./client-state.js";
 import { isPrivateMessage } from "./message.js";
 import { GROUP_EVENT_KIND } from "./protocol.js";

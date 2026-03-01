@@ -1,5 +1,4 @@
 import { Rumor } from "applesauce-common/helpers/gift-wrap";
-import { getEventHash } from "nostr-tools";
 import { useEffect, useRef, useState } from "react";
 import type { GroupSummary } from "../../lib/groups";
 import { bytesToHex } from "@noble/hashes/utils.js";
@@ -16,6 +15,7 @@ import {
 } from "../../lib/groups";
 import { getSubscriptionManager } from "../../lib/marmot-client";
 import { pool } from "../../lib/nostr";
+import { getEventHash } from "applesauce-core/helpers";
 
 // ============================================================================
 // Component: ErrorAlert
