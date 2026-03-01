@@ -4,7 +4,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { KeyPackageManager } from "../client/key-package-manager.js";
 import { getKeyPackageRelays } from "../core/key-package-event.js";
 import { KEY_PACKAGE_KIND } from "../core/protocol.js";
-import { KeyPackageStore } from "../store/key-package-store.js";
+import {
+  KeyPackageStore,
+  StoredKeyPackage,
+} from "../store/key-package-store.js";
 import type { KeyValueStoreBackend } from "../utils/key-value.js";
 import { MockNetwork } from "./helpers/mock-network.js";
 
@@ -594,6 +597,63 @@ describe("KeyPackageManager", () => {
       const events = await getPublished(manager, pkg.keyPackageRef);
       // 1 from create() + 2 from track()
       expect(events).toHaveLength(3);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // markUsed()
+  // -------------------------------------------------------------------------
+
+  describe("markUsed()", () => {
+    it("sets used=true on the stored key package", async () => {
+      const { manager } = makeManager(network, account);
+      const pkg = await manager.create({ relays: ["wss://relay.test"] });
+
+      await manager.markUsed(pkg.keyPackageRef);
+
+      const stored = await manager.get(pkg.keyPackageRef);
+      expect(stored?.used).toBe(true);
+    });
+
+    it("used flag is visible in list()", async () => {
+      const { manager } = makeManager(network, account);
+      const pkg = await manager.create({ relays: ["wss://relay.test"] });
+      await manager.create({ relays: ["wss://relay.test"] });
+
+      await manager.markUsed(pkg.keyPackageRef);
+
+      const all = await manager.list();
+      expect(all.filter((p) => p.used)).toHaveLength(1);
+      expect(all.filter((p) => !p.used)).toHaveLength(1);
+    });
+
+    it("emits keyPackageUpdated", async () => {
+      const { manager } = makeManager(network, account);
+      const pkg = await manager.create({ relays: ["wss://relay.test"] });
+
+      const updated: StoredKeyPackage[] = [];
+      manager.on("keyPackageUpdated", (kp) => updated.push(kp));
+
+      await manager.markUsed(pkg.keyPackageRef);
+
+      expect(updated).toHaveLength(1);
+      expect(updated[0].used).toBe(true);
+    });
+
+    it("does nothing when the ref does not exist", async () => {
+      const { manager } = makeManager(network, account);
+      // Should not throw for unknown ref
+      await expect(manager.markUsed("a".repeat(64))).resolves.toBeUndefined();
+    });
+
+    it("accepts Uint8Array ref", async () => {
+      const { manager } = makeManager(network, account);
+      const pkg = await manager.create({ relays: ["wss://relay.test"] });
+
+      await manager.markUsed(pkg.keyPackageRef);
+
+      const stored = await manager.get(pkg.keyPackageRef);
+      expect(stored?.used).toBe(true);
     });
   });
 

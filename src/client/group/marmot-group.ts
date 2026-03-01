@@ -36,7 +36,7 @@ import { getCredentialPubkey } from "../../core/credential.js";
 import {
   createGroupEvent,
   GroupMessagePair,
-  readGroupMessages,
+  decryptGroupMessages,
   serializeApplicationRumor,
   sortGroupCommits,
 } from "../../core/group-message.js";
@@ -972,7 +972,7 @@ export class MarmotGroup<
     // group's exporter_secret. We decrypt this first layer to get the actual
     // MLS message structure.
 
-    const { read, unreadable: decryptFailed } = await readGroupMessages(
+    const { read, unreadable: decryptFailed } = await decryptGroupMessages(
       events,
       this.state,
       this.ciphersuite,

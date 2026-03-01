@@ -24,6 +24,8 @@ export type LocalKeyPackage = {
   privatePackage: PrivateKeyPackage;
   /** Nostr kind-443 events this key package has been published under */
   published?: NostrEvent[];
+  /** Whether this key package has been consumed (e.g. used to join a group). Undefined means unused. */
+  used?: boolean;
 };
 
 /**
@@ -45,6 +47,8 @@ export type TrackedKeyPackage = {
   privatePackage?: undefined;
   /** Nostr kind-443 events this key package has been published under */
   published?: NostrEvent[];
+  /** Whether this key package has been consumed (e.g. used to join a group). Undefined means unused. */
+  used?: boolean;
 };
 
 /**
@@ -317,10 +321,11 @@ export class KeyPackageStore extends EventEmitter<KeyPackageStoreEvents> {
         (pkg): pkg is LocalKeyPackage =>
           pkg !== null && pkg.privatePackage !== undefined,
       )
-      .map(({ keyPackageRef, publicPackage, published }) => ({
+      .map(({ keyPackageRef, publicPackage, published, used }) => ({
         keyPackageRef,
         publicPackage,
         ...(published !== undefined ? { published } : {}),
+        ...(used !== undefined ? { used } : {}),
       }));
   }
 
@@ -351,5 +356,27 @@ export class KeyPackageStore extends EventEmitter<KeyPackageStoreEvents> {
     const key = await this.resolveStorageKey(ref);
     const item = await this.backend.getItem(key);
     return item !== null && item.privatePackage !== undefined;
+  }
+
+  /**
+   * Marks a stored key package as used by setting `used = true` and persisting the update.
+   *
+   * Emits `keyPackageUpdated`. This flag allows applications to distinguish consumed
+   * key packages (e.g. used to join a group) from fresh ones, and to periodically
+   * rotate or clean up used packages.
+   *
+   * Does nothing if no entry exists for the given ref.
+   *
+   * @param ref - The key package reference (as Uint8Array, hex string, or KeyPackage)
+   */
+  async markUsed(ref: Uint8Array | string | KeyPackage): Promise<void> {
+    const key = await this.resolveStorageKey(ref);
+    const existing = await this.backend.getItem(key);
+    if (!existing) return;
+
+    const updated: StoredKeyPackage = { ...existing, used: true };
+    await this.backend.setItem(key, updated);
+    this.emit("keyPackageUpdated", updated);
+    this.#log("marked key package %s as used", key);
   }
 }

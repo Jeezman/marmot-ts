@@ -431,7 +431,10 @@ describe("MarmotGroup.ingest() commit race ordering (MIP-03)", () => {
     // Process the application message through ingest
     const results: ClientState[] = [];
     for await (const res of group.ingest([applicationEvent])) {
-      if (res.kind === "processed" && res.result.kind === "applicationMessage") {
+      if (
+        res.kind === "processed" &&
+        res.result.kind === "applicationMessage"
+      ) {
         results.push(res.result.newState);
       }
     }

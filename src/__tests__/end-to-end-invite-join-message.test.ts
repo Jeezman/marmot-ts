@@ -137,9 +137,10 @@ describe("End-to-end: invite, join, first message", () => {
     const keyPackageEventId = welcomeRumor.tags.find((t) => t[0] === "e")?.[1];
     expect(keyPackageEventId).toBe(signedKeyPackageEvent.id);
 
-    // Join the group — returns { group, consumedKeyPackageRef }
-    const { group: inviteeGroup, consumedKeyPackageRef } =
-      await inviteeClient.joinGroupFromWelcome({ welcomeRumor });
+    // Join the group — returns { group }
+    const { group: inviteeGroup } = await inviteeClient.joinGroupFromWelcome({
+      welcomeRumor,
+    });
 
     // Invitee joins at the same epoch as admin (no automatic self-update).
     // MIP-02 self-update is the caller's responsibility.
@@ -147,11 +148,11 @@ describe("End-to-end: invite, join, first message", () => {
       adminGroup.state.groupContext.epoch,
     );
 
-    // MIP-00: last_resort key packages may be reused to handle race windows.
-    // Our default KeyPackages include last_resort, so the local private material
-    // is retained after a successful join. The caller should rotate when ready.
+    // The consumed key package is marked as used; private material is retained.
+    // The caller can rotate it via client.keyPackages.rotate(ref) when ready.
     expect(await inviteeClient.keyPackages.count()).toBe(1);
-    expect(consumedKeyPackageRef).not.toBeNull();
+    const listedPkgs = await inviteeClient.keyPackages.list();
+    expect(listedPkgs.some((p) => p.used)).toBe(true);
 
     // The caller can now rotate the consumed key package to clean up relays
     expect(inviteePkg.keyPackageRef).toBeDefined();

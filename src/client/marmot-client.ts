@@ -26,7 +26,6 @@ import { defaultCapabilities } from "../core/default-capabilities.js";
 import { createSimpleGroup, SimpleGroupOptions } from "../core/group.js";
 import { generateKeyPackage } from "../core/key-package.js";
 import { isRumorLike } from "../core/nostr.js";
-import { LAST_RESORT_KEY_PACKAGE_EXTENSION_TYPE } from "../core/protocol.js";
 import {
   getWelcome,
   getWelcomeKeyPackageRefs,
@@ -37,6 +36,7 @@ import {
   GroupStateStoreBackend,
 } from "../store/group-state-store.js";
 import { KeyPackageStore } from "../store/key-package-store.js";
+import { logger } from "../utils/debug.js";
 import {
   BaseGroupHistory,
   GroupHistoryFactory,
@@ -44,7 +44,6 @@ import {
 } from "./group/marmot-group.js";
 import { KeyPackageManager } from "./key-package-manager.js";
 import { NostrNetworkInterface } from "./nostr-interface.js";
-import { logger } from "../utils/debug.js";
 
 const log = logger.extend("client");
 
@@ -390,19 +389,20 @@ export class MarmotClient<
    * 2. Finds the matching local KeyPackage private material from the store
    * 3. Calls ts-mls joinGroup() to create a new ClientState
    * 4. Persists the resulting ClientState
-   * 5. Returns a MarmotGroup instance and the ref of the consumed key package
+   * 5. Marks the consumed key package as used via `client.keyPackages.markUsed()`
+   * 6. Returns a MarmotGroup instance
    *
-   * After joining, the caller should call `client.keyPackages.rotate(consumedKeyPackageRef)`
-   * to delete the used key package from relays and generate a fresh one.
+   * After joining, callers can list used key packages with
+   * `(await client.keyPackages.list()).filter(p => p.used)` and rotate them
+   * via `client.keyPackages.rotate(ref)` to publish fresh ones to relays.
    *
    * @param options - Options for joining from a Welcome message
    * @param options.welcomeRumor - The unwrapped kind 444 rumor event containing the Welcome message
-   * @returns Promise resolving to the joined group and the consumed key package ref
+   * @returns Promise resolving to the joined group
    * @throws Error if no matching KeyPackage is found or if joining fails
    */
   async joinGroupFromWelcome(options: { welcomeRumor: Rumor }): Promise<{
     group: MarmotGroup<THistory>;
-    consumedKeyPackageRef: Uint8Array | null;
   }> {
     const { welcomeRumor } = options;
     log("joining group from welcome rumor %s", welcomeRumor.id);
@@ -440,11 +440,10 @@ export class MarmotClient<
 
       // Check if this key package's ref matches any secret in the welcome
       // This is the RFC 9420 KeyPackageRef matching semantics
-      const hasMatchingSecret = welcome.secrets.some((secret: any) =>
+      const hasMatchingSecret = welcome.secrets.some((secret) =>
         secret.newMember.length === keyPackage.keyPackageRef.length
           ? secret.newMember.every(
-              (val: number, idx: number) =>
-                val === keyPackage.keyPackageRef[idx],
+              (val, idx) => val === keyPackage.keyPackageRef[idx],
             )
           : false,
       );
@@ -457,11 +456,10 @@ export class MarmotClient<
       });
     }
 
-    if (candidatePackages.length === 0) {
+    if (candidatePackages.length === 0)
       throw new Error(
         "No matching KeyPackage found in local store. Make sure you have published a KeyPackage event.",
       );
-    }
 
     // Prioritize packages that have matching secrets in the welcome
     // This ensures we try the most likely candidates first (RFC 9420 compliance)
@@ -474,7 +472,6 @@ export class MarmotClient<
     let clientState: ClientState | null = null;
     let lastError: Error | null = null;
     let consumedKeyPackageRef: Uint8Array | null = null;
-    let consumedKeyPackage: KeyPackage | null = null;
 
     for (const keyPackage of prioritizedKeyPackages) {
       try {
@@ -491,7 +488,6 @@ export class MarmotClient<
           privateKeys: keyPackage.privatePackage,
         });
         consumedKeyPackageRef = keyPackage.keyPackageRef;
-        consumedKeyPackage = keyPackage.publicPackage;
         // If successful, break out of the loop
         break;
       } catch (error) {
@@ -509,24 +505,11 @@ export class MarmotClient<
       throw new Error(errorMessage);
     }
 
-    // MIP-00: For non-last_resort key packages, remove local private material after
-    // successfully joining. Last_resort packages are retained because they may still
-    // be needed to decrypt other Welcomes (race window). The caller should call
-    // client.keyPackages.rotate(consumedKeyPackageRef) when ready to publish the deletion.
-    if (consumedKeyPackageRef) {
-      const isLastResort = !!consumedKeyPackage?.extensions?.some(
-        (ext) =>
-          typeof ext === "object" &&
-          ext !== null &&
-          "extensionType" in ext &&
-          (ext as { extensionType: number }).extensionType ===
-            LAST_RESORT_KEY_PACKAGE_EXTENSION_TYPE,
-      );
-
-      if (!isLastResort) {
-        await this.keyPackages.remove(consumedKeyPackageRef);
-      }
-    }
+    // Mark the consumed key package as used. Callers can later list used packages
+    // with (await client.keyPackages.list()).filter(p => p.used) and rotate them
+    // via client.keyPackages.rotate(ref) to publish fresh ones to relays.
+    if (consumedKeyPackageRef)
+      await this.keyPackages.markUsed(consumedKeyPackageRef);
 
     // Save the group state to the store
     const stateBytes = this.serializeState(clientState);
@@ -554,7 +537,7 @@ export class MarmotClient<
     // here caused the joining member to fork off to a new epoch before other members
     // could ingest the commit.
 
-    return { group, consumedKeyPackageRef };
+    return { group };
   }
 
   /**

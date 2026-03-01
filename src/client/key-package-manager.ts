@@ -408,6 +408,23 @@ export class KeyPackageManager extends EventEmitter<KeyPackageManagerEvents> {
     return this.store.getPrivateKey(ref);
   }
 
+  /**
+   * Marks a key package as used by setting `used = true` on the stored entry.
+   *
+   * This flag signals that the key package has been consumed (e.g. used to join
+   * a group). Applications can use this to periodically list and rotate used
+   * key packages to maintain a fresh supply on relays.
+   *
+   * Does nothing if no entry is found for the given ref.
+   *
+   * @param ref - The key package reference
+   */
+  async markUsed(ref: Uint8Array | string): Promise<void> {
+    const refHex = typeof ref === "string" ? ref : bytesToHex(ref);
+    await this.store.markUsed(ref);
+    this.#log("marked key package %s as used", refHex);
+  }
+
   // ---------------------------------------------------------------------------
   // Watching
   // ---------------------------------------------------------------------------
