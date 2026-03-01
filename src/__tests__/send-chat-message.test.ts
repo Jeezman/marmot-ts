@@ -79,7 +79,10 @@ async function collectApplicationRumors(
 
   const rumors: Rumor[] = [];
   for await (const ingestResult of adminGroup.ingest(groupEvents)) {
-    if (ingestResult.result.kind === "applicationMessage") {
+    if (
+      ingestResult.kind === "processed" &&
+      ingestResult.result.kind === "applicationMessage"
+    ) {
       rumors.push(deserializeApplicationData(ingestResult.result.message));
     }
   }

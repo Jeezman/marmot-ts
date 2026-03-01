@@ -3,6 +3,7 @@ import type { EventSigner } from "applesauce-core/event-factory";
 import { bytesToHex, type NostrEvent } from "applesauce-core/helpers/event";
 import { Debugger } from "debug";
 import { EventEmitter } from "eventemitter3";
+import { getEventHash } from "nostr-tools";
 import {
   CiphersuiteImpl,
   ClientState,
@@ -47,13 +48,13 @@ import { GroupStateStore } from "../../store/group-state-store.js";
 import { logger } from "../../utils/debug.js";
 import { createGiftWrap, hasAck } from "../../utils/index.js";
 import { unixNow } from "../../utils/nostr.js";
-import { getEventHash } from "nostr-tools";
 import { NoGroupRelaysError, NoMarmotGroupDataError } from "../errors.js";
 import { NostrNetworkInterface, PublishResponse } from "../nostr-interface.js";
 import { proposeInviteUser } from "./proposals/invite-user.js";
 
-/** Result from ingesting a group event */
-export type IngestResult = {
+/** An event whose MLS message was successfully processed */
+export type ProcessedIngestResult = {
+  kind: "processed";
   /** The result of processing the event */
   result: ProcessMessageResult;
   /** The event that was processed */
@@ -61,6 +62,48 @@ export type IngestResult = {
   /** The MLS message that was processed */
   message: MlsMessage;
 };
+
+/** A commit that was rejected by the admin-verification callback */
+export type RejectedIngestResult = {
+  kind: "rejected";
+  /** The result returned by processMessage (actionTaken === "reject") */
+  result: ProcessMessageResult;
+  /** The event that was rejected */
+  event: NostrEvent;
+  /** The MLS message that was rejected */
+  message: MlsMessage;
+};
+
+/** An event that was skipped without processing */
+export type SkippedIngestResult = {
+  kind: "skipped";
+  /** The event that was skipped */
+  event: NostrEvent;
+  /** The decoded MLS message */
+  message: MlsMessage;
+  /**
+   * Why the event was skipped:
+   * - `"past-epoch"` – commit belongs to an epoch we have already advanced past
+   * - `"wrong-wireformat"` – the MLS wireformat is unexpected for a group message
+   */
+  reason: "past-epoch" | "wrong-wireformat";
+};
+
+/** An event that could not be decrypted or processed after all retry attempts */
+export type UnreadableIngestResult = {
+  kind: "unreadable";
+  /** The event that could not be processed */
+  event: NostrEvent;
+  /** All errors captured across every retry attempt, in chronological order */
+  errors: unknown[];
+};
+
+/** Result from ingesting a group event */
+export type IngestResult =
+  | ProcessedIngestResult
+  | RejectedIngestResult
+  | SkippedIngestResult
+  | UnreadableIngestResult;
 
 /**
  * The minimum interface for a group to store them MLS messages
@@ -855,6 +898,7 @@ export class MarmotGroup<
    *    - Commits advance the epoch and update the group state
    *
    * After both stages, recursively retry unreadable messages until no more can be read.
+   * Events that can never be processed are yielded as {@link UnreadableIngestResult}.
    *
    * @param events - Array of Nostr events containing encrypted MLS messages
    * @param options - Options for controlling retry behavior
@@ -867,11 +911,19 @@ export class MarmotGroup<
     options?: {
       retryCount?: number;
       maxRetries?: number;
+      /**
+       * @internal Flat list of `{ eventId, error }` entries accumulated across
+       * all retry rounds.  Passed by reference so every recursive call appends
+       * to the same array, giving the final unreadable yield the full history.
+       */
+      _errors?: Array<{ eventId: string; error: unknown }>;
     },
   ): AsyncGenerator<IngestResult> {
     // Set default retry options
     const retryCount = options?.retryCount ?? 0;
     const maxRetries = options?.maxRetries ?? 5;
+    const errorList: Array<{ eventId: string; error: unknown }> =
+      options?._errors ?? [];
     if (retryCount === 0) this.log("ingesting %d event(s)", events.length);
 
     // Check if we've exceeded the maximum retry attempts.
@@ -879,8 +931,17 @@ export class MarmotGroup<
     // IMPORTANT: ingest() processes untrusted network input. If we throw here,
     // a single permanently-unreadable message (e.g. encrypted under an epoch we
     // can never decrypt, malformed ciphertext, spam) can DoS consumers.
-    // Instead, stop retrying and drop the remaining unreadable events.
+    // Instead, stop retrying and yield the remaining events as unreadable.
     if (retryCount > maxRetries) {
+      for (const event of events) {
+        yield {
+          kind: "unreadable",
+          event,
+          errors: errorList
+            .filter((e) => e.eventId === event.id)
+            .map((e) => e.error),
+        };
+      }
       return;
     }
     // Early return if no events to process
@@ -893,14 +954,38 @@ export class MarmotGroup<
     // group's exporter_secret. We decrypt this first layer to get the actual
     // MLS message structure.
 
-    const { read, unreadable } = await readGroupMessages(
+    const { read, unreadable: decryptFailed } = await readGroupMessages(
       events,
       this.state,
       this.ciphersuite,
     );
 
-    // If nothing was readable, exit
-    if (read.length === 0) return;
+    // Record a decryption error for each event that failed the NIP-44 layer.
+    for (const event of decryptFailed) {
+      errorList.push({
+        eventId: event.id,
+        error: new Error("Failed to decrypt group message"),
+      });
+    }
+
+    // If nothing was readable the exporter_secret cannot change this round, so
+    // retrying would always fail the same way.  Yield decrypt failures now.
+    if (read.length === 0) {
+      for (const event of decryptFailed) {
+        yield {
+          kind: "unreadable",
+          event,
+          errors: errorList
+            .filter((e) => e.eventId === event.id)
+            .map((e) => e.error),
+        };
+      }
+      return;
+    }
+
+    // Collect events that need a retry after state advances (e.g. after a commit
+    // rotates the exporter_secret so we can decrypt previously opaque events).
+    const unreadable: NostrEvent[] = [...decryptFailed];
 
     // ============================================================================
     // STEP 2: Separate commits from non-commit messages
@@ -934,11 +1019,12 @@ export class MarmotGroup<
 
     for (const { event, message } of nonCommits) {
       try {
-        // Skip non-private/public messages (welcome, groupInfo, keyPackage, etc.)
+        // Yield unexpected wireformats as skipped rather than silently ignoring them.
         if (
           message.wireformat !== wireformats.mls_private_message &&
           message.wireformat !== wireformats.mls_public_message
         ) {
+          yield { kind: "skipped", event, message, reason: "wrong-wireformat" };
           continue;
         }
 
@@ -961,7 +1047,7 @@ export class MarmotGroup<
         // Update state if message changed it
         if (result.kind === "newState") {
           this.state = result.newState;
-          yield { result, event, message };
+          yield { kind: "processed", result, event, message };
         } else if (result.kind === "applicationMessage") {
           // Application messages also update state (for forward secrecy)
           this.state = result.newState;
@@ -975,12 +1061,13 @@ export class MarmotGroup<
             }
           }
 
-          yield { result, event, message };
+          yield { kind: "processed", result, event, message };
           this.emit("applicationMessage", result.message);
         }
       } catch (error) {
         // Message processing failed - might be invalid or from wrong epoch
         // Add to unreadable for retry later (might become readable after state updates)
+        errorList.push({ eventId: event.id, error });
         unreadable.push(event);
       }
     }
@@ -1001,7 +1088,10 @@ export class MarmotGroup<
     const adminCallback = this.createAdminVerificationCallback();
 
     for (const { event, message } of commits) {
-      if (!isPrivateMessage(message)) continue;
+      if (!isPrivateMessage(message)) {
+        yield { kind: "skipped", event, message, reason: "wrong-wireformat" };
+        continue;
+      }
 
       const commitEpoch =
         typeof message.privateMessage.epoch === "bigint"
@@ -1009,14 +1099,21 @@ export class MarmotGroup<
           : BigInt(message.privateMessage.epoch);
       const currentEpoch = this.state.groupContext.epoch;
 
-      // Skip commits from past epochs - we've already processed these
+      // Commits from past epochs were already applied — skip and report them.
       if (commitEpoch < currentEpoch) {
+        yield { kind: "skipped", event, message, reason: "past-epoch" };
         continue;
       }
 
-      // Skip commits that are too far in the future
-      // We can only process commits for the current epoch or the next epoch
+      // Commits too far in the future can't be applied yet.
+      // Add to unreadable so they are retried after state advances.
       if (commitEpoch > currentEpoch + 1n) {
+        errorList.push({
+          eventId: event.id,
+          error: new Error(
+            `Commit epoch ${commitEpoch} is too far ahead of current epoch ${currentEpoch}`,
+          ),
+        });
         unreadable.push(event);
         continue;
       }
@@ -1041,19 +1138,21 @@ export class MarmotGroup<
 
         if (result.kind === "newState") {
           // If the commit was rejected by the callback (admin verification),
-          // do not advance state, do not yield, and do not retry.
+          // do not advance state and do not retry — yield it so callers can observe it.
           if (result.actionTaken === "reject") {
+            yield { kind: "rejected", result, event, message };
             continue;
           }
 
           // Successfully processed the commit - update our state
           // After each commit, the epoch advances and keys rotate
           this.state = result.newState;
-          yield { result, event, message };
+          yield { kind: "processed", result, event, message };
         }
       } catch (error) {
         // Commit processing failed - add to unreadable for retry
         // It might become valid after processing more proposals or state updates
+        errorList.push({ eventId: event.id, error });
         unreadable.push(event);
       }
     }
@@ -1076,6 +1175,7 @@ export class MarmotGroup<
       yield* this.ingest(unreadable, {
         retryCount: retryCount + 1,
         maxRetries: maxRetries,
+        _errors: errorList,
       });
     }
   }

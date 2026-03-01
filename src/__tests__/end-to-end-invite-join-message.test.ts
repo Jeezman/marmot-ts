@@ -207,8 +207,11 @@ describe("End-to-end: invite, join, first message", () => {
     // Process the new events
     const receivedMessages: Rumor[] = [];
     for await (const result of adminGroup.ingest(newGroupEvents)) {
-      if (result.kind === "applicationMessage") {
-        const rumor = deserializeApplicationData(result.message);
+      if (
+        result.kind === "processed" &&
+        result.result.kind === "applicationMessage"
+      ) {
+        const rumor = deserializeApplicationData(result.result.message);
         receivedMessages.push(rumor);
       }
     }
