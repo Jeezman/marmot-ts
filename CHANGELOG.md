@@ -1,5 +1,31 @@
 # @internet-privacy/marmots
 
+## 0.2.0
+
+### Minor Changes
+
+- e1f19d5: Add `MarmotClient.readInviteGroupInfo` method for easily reading welcome messages
+- 488dc69: Add sendChatMessage() convenience method to MarmotGroup for sending kind 9 chat messages
+- af15232: Add `getWelcomeKeyPackageRefs` method for reading key package refs from a welcome message
+- af15232: Add `readWelcomeGroupInfo` and `readWelcomeMarmotGroupData` to read group metadata from a Welcome message without joining the group
+- 8647071: Add `KeyPackageManager` class to manage key packages.
+- d7a2e95: Update `MarmotGroup.ingest` to yield a processed Nostr event
+- 10f2fa0: Rename `readGroupMessage` to `decryptGroupMessage`
+- 2abce4b: Change `IngestResult` to a discriminated union; `ingest()` now yields skipped, rejected, and unreadable events in addition to processed ones
+- 10f2fa0: Add `used` flag to stored key packages and `markUsed()` method on `KeyPackageManager` for tracking consumed key packages
+- 10f2fa0: Rename `readGroupMessage` to `decryptGroupMessages`
+- 10f2fa0: Remove `consumedKeyPackageRef` from `joinGroupFromWelcome()` return value; the consumed key package is now automatically marked as used instead of being rotated
+- 18e80fd: Replace console logging with debug package; enable logging via DEBUG=marmot-ts:\*
+- 10c7702: Add `isLastResort` option to `generateKeyPackage()` for controlling last_resort extension, clean up relay handling, and code
+- 9a2b6f9: Removed `MarmotClient.rotateKeyPackage()`, use `MarmotClient.keyPackages.rotate()` instead
+- 10f2fa0: Rename `LAST_RESORT_KEY_PACKAGE_EXTENSION_TYPE` to `LAST_RESORT_EXTENSION_TYPE`
+- 9a2b6f9: Remove `MarmotClient.watchKeyPackages()` method, use `MarmotClient.keyPackages.watch()` instead
+
+### Patch Changes
+
+- 12d0605: Fix welcome event content missing outer MLSMessage object
+- 9334865: Fix joinGroupFromWelcome() to not automatically send a self-update commit, which was causing the joining member to fork if there are pending commits
+
 ## 0.1.0
 
 ### Minor Changes
