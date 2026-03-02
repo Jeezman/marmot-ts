@@ -14,6 +14,7 @@
  */
 
 import { chacha20poly1305 } from "@noble/ciphers/chacha.js";
+import { equalBytes } from "@noble/ciphers/utils.js";
 import { expand as hkdf_expand } from "@noble/hashes/hkdf.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import {
@@ -298,17 +299,10 @@ export function decryptMediaFile(
   const decrypted = chacha20poly1305(fileKey, nonce, aad).decrypt(encrypted);
 
   // MIP-04 §Integrity Verification: SHA256(decrypted_content) MUST equal sha256 field
-  const expectedHash = hexToBytes(attachment.sha256);
-  const actualHash = sha256(decrypted);
-  if (actualHash.length !== expectedHash.length) {
-    throw new Error("MIP-04 integrity check failed: hash length mismatch");
-  }
-  for (let i = 0; i < actualHash.length; i++) {
-    if (actualHash[i] !== expectedHash[i]) {
-      throw new Error(
-        "MIP-04 integrity check failed: decrypted content hash does not match expected hash",
-      );
-    }
+  if (!equalBytes(sha256(decrypted), hexToBytes(attachment.sha256))) {
+    throw new Error(
+      "MIP-04 integrity check failed: decrypted content hash does not match expected hash",
+    );
   }
 
   return decrypted;
