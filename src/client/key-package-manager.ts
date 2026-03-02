@@ -106,7 +106,7 @@ export class KeyPackageManager extends EventEmitter<KeyPackageManagerEvents> {
   private readonly signer: EventSigner;
   private readonly network: NostrNetworkInterface;
 
-  `#log` = logger.extend("KeyPackageManager");
+  #log = logger.extend("KeyPackageManager");
 
   constructor(options: {
     keyPackageStore: KeyPackageStore;
@@ -143,10 +143,11 @@ export class KeyPackageManager extends EventEmitter<KeyPackageManagerEvents> {
    * @throws Error if relays is empty
    */
   async create(options: CreateKeyPackageOptions): Promise<ListedKeyPackage> {
-    if (!options.relays || options.relays.length === 0)
+    if (!options.relays || options.relays.length === 0) {
       throw new Error(
         "At least one relay URL is required to publish a key package",
       );
+    }
 
     this.#log("creating key package on relays: %O", options.relays);
 
