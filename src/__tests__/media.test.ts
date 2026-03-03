@@ -526,6 +526,76 @@ describe("parseMip04ImetaTag", () => {
     expect(parseMip04ImetaTag(tag)).toBeNull();
   });
 
+  it("returns null when n is too short (not 12 bytes encoded)", () => {
+    const tag = [
+      "imeta",
+      "x " + bytesToHex(sha256(randomBytes(32))),
+      "m image/jpeg",
+      "filename photo.jpg",
+      "n " + bytesToHex(randomBytes(11)), // 22 chars — one byte short
+      "v " + MIP04_VERSION,
+    ];
+    expect(parseMip04ImetaTag(tag)).toBeNull();
+  });
+
+  it("returns null when n is too long (more than 12 bytes encoded)", () => {
+    const tag = [
+      "imeta",
+      "x " + bytesToHex(sha256(randomBytes(32))),
+      "m image/jpeg",
+      "filename photo.jpg",
+      "n " + bytesToHex(randomBytes(13)), // 26 chars — one byte over
+      "v " + MIP04_VERSION,
+    ];
+    expect(parseMip04ImetaTag(tag)).toBeNull();
+  });
+
+  it("returns null when x (sha256) is absent", () => {
+    const tag = [
+      "imeta",
+      "m image/jpeg",
+      "filename photo.jpg",
+      "n " + bytesToHex(randomBytes(12)),
+      "v " + MIP04_VERSION,
+    ];
+    expect(parseMip04ImetaTag(tag)).toBeNull();
+  });
+
+  it("returns null when x is wrong length", () => {
+    const tag = [
+      "imeta",
+      "x " + bytesToHex(randomBytes(31)), // 62 chars instead of 64
+      "m image/jpeg",
+      "filename photo.jpg",
+      "n " + bytesToHex(randomBytes(12)),
+      "v " + MIP04_VERSION,
+    ];
+    expect(parseMip04ImetaTag(tag)).toBeNull();
+  });
+
+  it("returns null when m (MIME type) is absent", () => {
+    const tag = [
+      "imeta",
+      "x " + bytesToHex(sha256(randomBytes(32))),
+      "filename photo.jpg",
+      "n " + bytesToHex(randomBytes(12)),
+      "v " + MIP04_VERSION,
+    ];
+    expect(parseMip04ImetaTag(tag)).toBeNull();
+  });
+
+  it("returns null when m is not a valid MIME type", () => {
+    const tag = [
+      "imeta",
+      "x " + bytesToHex(sha256(randomBytes(32))),
+      "m notamimetype",
+      "filename photo.jpg",
+      "n " + bytesToHex(randomBytes(12)),
+      "v " + MIP04_VERSION,
+    ];
+    expect(parseMip04ImetaTag(tag)).toBeNull();
+  });
+
   it("returns null when filename is absent", () => {
     const tag = [
       "imeta",
@@ -723,6 +793,91 @@ describe("getMip04AttachmentFromFileMetadataEvent", () => {
     };
     const event = buildKind1063Event(attachment);
     event.tags = event.tags.filter((t) => t[0] !== "n");
+    expect(getMip04AttachmentFromFileMetadataEvent(event)).toBeNull();
+  });
+
+  it("returns null when n is too short (not 12 bytes encoded)", () => {
+    const event = buildKind1063Event({
+      sha256: bytesToHex(sha256(randomBytes(32))),
+      type: "image/jpeg",
+      filename: "photo.jpg",
+      nonce: bytesToHex(randomBytes(12)),
+      version: MIP04_VERSION,
+    });
+    // Replace n with an 11-byte (22 char) nonce
+    event.tags = event.tags.map((t) =>
+      t[0] === "n" ? ["n", bytesToHex(randomBytes(11))] : t,
+    );
+    expect(getMip04AttachmentFromFileMetadataEvent(event)).toBeNull();
+  });
+
+  it("returns null when n is too long (more than 12 bytes encoded)", () => {
+    const event = buildKind1063Event({
+      sha256: bytesToHex(sha256(randomBytes(32))),
+      type: "image/jpeg",
+      filename: "photo.jpg",
+      nonce: bytesToHex(randomBytes(12)),
+      version: MIP04_VERSION,
+    });
+    // Replace n with a 13-byte (26 char) nonce
+    event.tags = event.tags.map((t) =>
+      t[0] === "n" ? ["n", bytesToHex(randomBytes(13))] : t,
+    );
+    expect(getMip04AttachmentFromFileMetadataEvent(event)).toBeNull();
+  });
+
+  it("returns null when x (sha256) tag is absent", () => {
+    const attachment: Mip04MediaAttachment = {
+      sha256: bytesToHex(sha256(randomBytes(32))),
+      type: "image/jpeg",
+      filename: "photo.jpg",
+      nonce: bytesToHex(randomBytes(12)),
+      version: MIP04_VERSION,
+    };
+    const event = buildKind1063Event(attachment);
+    event.tags = event.tags.filter((t) => t[0] !== "x");
+    expect(getMip04AttachmentFromFileMetadataEvent(event)).toBeNull();
+  });
+
+  it("returns null when x is wrong length", () => {
+    const event = buildKind1063Event({
+      sha256: bytesToHex(sha256(randomBytes(32))),
+      type: "image/jpeg",
+      filename: "photo.jpg",
+      nonce: bytesToHex(randomBytes(12)),
+      version: MIP04_VERSION,
+    });
+    // Replace x with a 31-byte (62 char) hash
+    event.tags = event.tags.map((t) =>
+      t[0] === "x" ? ["x", bytesToHex(randomBytes(31))] : t,
+    );
+    expect(getMip04AttachmentFromFileMetadataEvent(event)).toBeNull();
+  });
+
+  it("returns null when m (MIME type) tag is absent", () => {
+    const attachment: Mip04MediaAttachment = {
+      sha256: bytesToHex(sha256(randomBytes(32))),
+      type: "image/jpeg",
+      filename: "photo.jpg",
+      nonce: bytesToHex(randomBytes(12)),
+      version: MIP04_VERSION,
+    };
+    const event = buildKind1063Event(attachment);
+    event.tags = event.tags.filter((t) => t[0] !== "m");
+    expect(getMip04AttachmentFromFileMetadataEvent(event)).toBeNull();
+  });
+
+  it("returns null when m is not a valid MIME type", () => {
+    const event = buildKind1063Event({
+      sha256: bytesToHex(sha256(randomBytes(32))),
+      type: "image/jpeg",
+      filename: "photo.jpg",
+      nonce: bytesToHex(randomBytes(12)),
+      version: MIP04_VERSION,
+    });
+    event.tags = event.tags.map((t) =>
+      t[0] === "m" ? ["m", "notamimetype"] : t,
+    );
     expect(getMip04AttachmentFromFileMetadataEvent(event)).toBeNull();
   });
 

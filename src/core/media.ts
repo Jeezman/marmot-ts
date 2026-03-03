@@ -317,6 +317,27 @@ export function decryptMediaFile(
 // Parsing helpers
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Validation guards
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns `true` iff `value` is a non-empty MIME type string of the form
+ * `type/subtype` (parameters are allowed but the bare type/subtype part must
+ * be present and non-empty on both sides of the `/`).
+ *
+ * @internal
+ */
+function isValidMimeType(value: string): boolean {
+  const bare = value.split(";")[0].trim();
+  const slash = bare.indexOf("/");
+  return slash > 0 && slash < bare.length - 1;
+}
+
+// ---------------------------------------------------------------------------
+// Internal imeta parser
+// ---------------------------------------------------------------------------
+
 /**
  * Splits the space-separated entries of an `imeta` tag into a key→value map.
  *
@@ -349,7 +370,10 @@ function parseRawImetaEntries(tag: string[]): Map<string, string> {
  * Returns `null` if:
  * - The tag is not a valid `imeta` tag (first element is not `"imeta"`)
  * - The `v` field is absent or does not match {@link MIP04_VERSION}
- * - The required `n` (nonce) or `filename` fields are missing or empty
+ * - The `n` (nonce) field is absent or is not exactly 24 characters (hex-encoded 12-byte nonce)
+ * - The `filename` field is absent or empty
+ * - The `x` (sha256) field is absent or is not exactly 64 characters (hex-encoded 32-byte hash)
+ * - The `m` (MIME type) field is absent or is not a valid `type/subtype` string
  *
  * Per the MIP-04 spec, clients MUST reject deprecated `mip04-v1` tags.
  *
@@ -366,10 +390,17 @@ export function parseMip04ImetaTag(tag: string[]): Mip04MediaAttachment | null {
   const version = raw.get("v");
   const nonce = raw.get("n");
   const filename = raw.get("filename");
+  const sha256 = raw.get("x");
+  const mimeType = raw.get("m");
 
   if (version !== MIP04_VERSION) return null;
-  if (!nonce || nonce.length === 0) return null;
+  // n encodes a 12-byte nonce as hex → must be exactly 24 characters
+  if (!nonce || nonce.length !== 24) return null;
   if (!filename || filename.length === 0) return null;
+  // x encodes a 32-byte SHA-256 as hex → must be exactly 64 characters
+  if (!sha256 || sha256.length !== 64) return null;
+  // m must be a valid MIME type
+  if (!mimeType || !isValidMimeType(mimeType)) return null;
 
   // Delegate standard NIP-92 field parsing to applesauce.
   const base = getFileMetadataFromImetaTag(tag);
@@ -408,7 +439,10 @@ export function getMip04Attachments(tags: string[][]): Mip04MediaAttachment[] {
  *
  * Returns `null` if:
  * - The `v` tag is absent or does not match {@link MIP04_VERSION}
- * - The required `n` (nonce) or `filename` tags are missing or empty
+ * - The `n` (nonce) tag is absent or is not exactly 24 characters (hex-encoded 12-byte nonce)
+ * - The `filename` tag is absent or empty
+ * - The `x` (sha256) tag is absent or is not exactly 64 characters (hex-encoded 32-byte hash)
+ * - The `m` (MIME type) tag is absent or is not a valid `type/subtype` string
  *
  * @param event - A kind 1063 Nostr event
  * @returns A fully-typed {@link Mip04MediaAttachment}, or `null` if the event
@@ -424,10 +458,17 @@ export function getMip04AttachmentFromFileMetadataEvent(
   const version = getTag("v");
   const nonce = getTag("n");
   const filename = getTag("filename");
+  const sha256 = getTag("x");
+  const mimeType = getTag("m");
 
   if (version !== MIP04_VERSION) return null;
-  if (!nonce || nonce.length === 0) return null;
+  // n encodes a 12-byte nonce as hex → must be exactly 24 characters
+  if (!nonce || nonce.length !== 24) return null;
   if (!filename || filename.length === 0) return null;
+  // x encodes a 32-byte SHA-256 as hex → must be exactly 64 characters
+  if (!sha256 || sha256.length !== 64) return null;
+  // m must be a valid MIME type
+  if (!mimeType || !isValidMimeType(mimeType)) return null;
 
   // Delegate standard NIP-94 tag parsing to applesauce.
   const base = getFileMetadata(event);
