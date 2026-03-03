@@ -599,6 +599,20 @@ export class MarmotGroup<
     // "desired gen in the past").
     this.#sentEventIds.add(applicationEvent.id);
 
+    // Save to history immediately so the sender sees their own message without
+    // waiting for the relay echo to arrive and be ingested.
+    if (this.history) {
+      try {
+        await this.history.saveMessage(applicationData);
+      } catch (err) {
+        this.emit("historyError", err as Error);
+      }
+    }
+
+    // Update the group state after successful publish
+    // Application messages update state for forward secrecy (key schedule rotation)
+    this.state = newState;
+
     // Publish to the group's relays
     const relays = this.relays;
     if (!relays) throw new NoGroupRelaysError();
@@ -614,20 +628,6 @@ export class MarmotGroup<
         }`,
       );
     }
-
-    // Save to history immediately so the sender sees their own message without
-    // waiting for the relay echo to arrive and be ingested.
-    if (this.history) {
-      try {
-        await this.history.saveMessage(applicationData);
-      } catch (err) {
-        this.emit("historyError", err as Error);
-      }
-    }
-
-    // Update the group state after successful publish
-    // Application messages update state for forward secrecy (key schedule rotation)
-    this.state = newState;
 
     return response;
   }
