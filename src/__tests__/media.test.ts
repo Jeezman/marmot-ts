@@ -11,7 +11,10 @@ import {
   decryptMediaFile,
   deriveMip04FileKey,
   encryptMediaFile,
+  getMip04AttachmentFromFileMetadataEvent,
+  getMip04Attachments,
   MIP04_VERSION,
+  parseMip04ImetaTag,
   type Mip04MediaAttachment,
 } from "../core/media.js";
 
@@ -443,5 +446,345 @@ describe("encryptMediaFile / decryptMediaFile", () => {
         sha256: bytesToHex(sha256(randomBytes(64))),
       }),
     ).toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Helpers for imeta parsing tests
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds a valid MIP-04 v2 `imeta` tag array from a {@link Mip04MediaAttachment}.
+ * Mirrors what `createImetaTagForAttachment` from applesauce would emit for the
+ * standard NIP-92 fields, with the MIP-04 extensions appended.
+ */
+function buildImetaTag(attachment: Mip04MediaAttachment): string[] {
+  const parts: string[] = ["imeta"];
+  if (attachment.url) parts.push(`url ${attachment.url}`);
+  if (attachment.type) parts.push(`m ${attachment.type}`);
+  if (attachment.sha256) parts.push(`x ${attachment.sha256}`);
+  if (attachment.size !== undefined) parts.push(`size ${attachment.size}`);
+  if (attachment.dimensions) parts.push(`dim ${attachment.dimensions}`);
+  if (attachment.blurhash) parts.push(`blurhash ${attachment.blurhash}`);
+  if (attachment.alt) parts.push(`alt ${attachment.alt}`);
+  parts.push(`filename ${attachment.filename}`);
+  parts.push(`n ${attachment.nonce}`);
+  parts.push(`v ${attachment.version}`);
+  return parts;
+}
+
+/** Minimal valid MIP-04 v2 imeta tag with only the required MIP-04 fields. */
+function minimalImetaTag(overrides?: Partial<Mip04MediaAttachment>): string[] {
+  const base: Mip04MediaAttachment = {
+    sha256: bytesToHex(sha256(randomBytes(32))),
+    type: "image/jpeg",
+    filename: "photo.jpg",
+    nonce: bytesToHex(randomBytes(12)),
+    version: MIP04_VERSION,
+    ...overrides,
+  };
+  return buildImetaTag(base);
+}
+
+// ---------------------------------------------------------------------------
+// parseMip04ImetaTag
+// ---------------------------------------------------------------------------
+
+describe("parseMip04ImetaTag", () => {
+  it("returns null for non-imeta tags", () => {
+    expect(parseMip04ImetaTag(["p", "pubkey"])).toBeNull();
+    expect(parseMip04ImetaTag(["e", "eventid"])).toBeNull();
+    expect(parseMip04ImetaTag([])).toBeNull();
+  });
+
+  it("returns null when v field is absent", () => {
+    const tag = [
+      "imeta",
+      "x abcdef1234",
+      "m image/jpeg",
+      "filename photo.jpg",
+      "n " + bytesToHex(randomBytes(12)),
+    ];
+    expect(parseMip04ImetaTag(tag)).toBeNull();
+  });
+
+  it("returns null when v field does not match MIP04_VERSION", () => {
+    const tag = minimalImetaTag();
+    // Replace v field with legacy version
+    const tampered = tag.map((p) => (p.startsWith("v ") ? "v mip04-v1" : p));
+    expect(parseMip04ImetaTag(tampered)).toBeNull();
+  });
+
+  it("returns null when n (nonce) is absent", () => {
+    const tag = [
+      "imeta",
+      "x " + bytesToHex(sha256(randomBytes(32))),
+      "m image/jpeg",
+      "filename photo.jpg",
+      "v " + MIP04_VERSION,
+    ];
+    expect(parseMip04ImetaTag(tag)).toBeNull();
+  });
+
+  it("returns null when filename is absent", () => {
+    const tag = [
+      "imeta",
+      "x " + bytesToHex(sha256(randomBytes(32))),
+      "m image/jpeg",
+      "n " + bytesToHex(randomBytes(12)),
+      "v " + MIP04_VERSION,
+    ];
+    expect(parseMip04ImetaTag(tag)).toBeNull();
+  });
+
+  it("returns a valid attachment for a well-formed tag", () => {
+    const sha = bytesToHex(sha256(randomBytes(32)));
+    const nonce = bytesToHex(randomBytes(12));
+    const tag = [
+      "imeta",
+      `url https://example.com/blob/${sha}`,
+      `x ${sha}`,
+      "m image/jpeg",
+      "filename photo.jpg",
+      `n ${nonce}`,
+      `v ${MIP04_VERSION}`,
+    ];
+
+    const result = parseMip04ImetaTag(tag);
+    expect(result).not.toBeNull();
+    expect(result!.filename).toBe("photo.jpg");
+    expect(result!.nonce).toBe(nonce);
+    expect(result!.version).toBe(MIP04_VERSION);
+    expect(result!.sha256).toBe(sha);
+    expect(result!.type).toBe("image/jpeg");
+    expect(result!.url).toBe(`https://example.com/blob/${sha}`);
+  });
+
+  it("copies standard NIP-92 fields via applesauce", () => {
+    const sha = bytesToHex(sha256(randomBytes(32)));
+    const nonce = bytesToHex(randomBytes(12));
+    const tag = [
+      "imeta",
+      `x ${sha}`,
+      "m video/mp4",
+      "dim 1920x1080",
+      "blurhash LEHV6nWB2yk8",
+      "alt A test video",
+      "size 4096",
+      "filename clip.mp4",
+      `n ${nonce}`,
+      `v ${MIP04_VERSION}`,
+    ];
+
+    const result = parseMip04ImetaTag(tag);
+    expect(result).not.toBeNull();
+    expect(result!.dimensions).toBe("1920x1080");
+    expect(result!.blurhash).toBe("LEHV6nWB2yk8");
+    expect(result!.alt).toBe("A test video");
+    expect(result!.size).toBe(4096);
+    expect(result!.type).toBe("video/mp4");
+    expect(result!.sha256).toBe(sha);
+  });
+
+  it("round-trips through encryptMediaFile → buildImetaTag → parseMip04ImetaTag", async () => {
+    const { clientState, ciphersuite } = await makeClientState();
+    const file = randomBytes(256);
+    const attachment = makeAttachment(file, "image/png", "snap.png");
+    const fileKey = await deriveMip04FileKey(
+      clientState,
+      ciphersuite,
+      attachment,
+    );
+    const { attachment: filled } = encryptMediaFile(file, fileKey, attachment);
+    const tag = buildImetaTag(filled);
+    const parsed = parseMip04ImetaTag(tag);
+
+    expect(parsed).not.toBeNull();
+    expect(parsed!.filename).toBe("snap.png");
+    expect(parsed!.nonce).toBe(filled.nonce);
+    expect(parsed!.sha256).toBe(filled.sha256);
+    expect(parsed!.type).toBe("image/png");
+    expect(parsed!.version).toBe(MIP04_VERSION);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getMip04Attachments
+// ---------------------------------------------------------------------------
+
+describe("getMip04Attachments", () => {
+  it("returns an empty array when there are no imeta tags", () => {
+    const tags = [
+      ["p", "pubkey"],
+      ["e", "eventid"],
+    ];
+    expect(getMip04Attachments(tags)).toEqual([]);
+  });
+
+  it("skips non-imeta tags", () => {
+    const tags = [["p", "pubkey"], minimalImetaTag()];
+    expect(getMip04Attachments(tags)).toHaveLength(1);
+  });
+
+  it("skips imeta tags that fail MIP-04 validation", () => {
+    const valid = minimalImetaTag();
+    const noVersion = valid.filter((p) => !p.startsWith("v "));
+    const noNonce = valid.filter((p) => !p.startsWith("n "));
+    const tags = [noVersion, noNonce, valid];
+    expect(getMip04Attachments(tags)).toHaveLength(1);
+  });
+
+  it("returns all valid MIP-04 v2 attachments", () => {
+    const tags = [minimalImetaTag(), minimalImetaTag(), minimalImetaTag()];
+    const results = getMip04Attachments(tags);
+    expect(results).toHaveLength(3);
+    for (const r of results) {
+      expect(r.version).toBe(MIP04_VERSION);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getMip04AttachmentFromFileMetadataEvent
+// ---------------------------------------------------------------------------
+
+describe("getMip04AttachmentFromFileMetadataEvent", () => {
+  /** Builds a minimal kind 1063 event from a Mip04MediaAttachment. */
+  function buildKind1063Event(
+    attachment: Mip04MediaAttachment,
+    overrideTags?: string[][],
+  ): Parameters<typeof getMip04AttachmentFromFileMetadataEvent>[0] {
+    const tags: string[][] = [
+      ...(attachment.url ? [["url", attachment.url]] : []),
+      ...(attachment.type ? [["m", attachment.type]] : []),
+      ...(attachment.sha256 ? [["x", attachment.sha256]] : []),
+      ...(attachment.size !== undefined
+        ? [["size", String(attachment.size)]]
+        : []),
+      ...(attachment.dimensions ? [["dim", attachment.dimensions]] : []),
+      ...(attachment.blurhash ? [["blurhash", attachment.blurhash]] : []),
+      ...(attachment.alt ? [["alt", attachment.alt]] : []),
+      ["filename", attachment.filename],
+      ["n", attachment.nonce],
+      ["v", attachment.version],
+      ...(overrideTags ?? []),
+    ];
+    return {
+      kind: 1063,
+      content: "",
+      tags,
+      id: "0".repeat(64),
+      pubkey: "0".repeat(64),
+      created_at: 0,
+      sig: "0".repeat(128),
+    };
+  }
+
+  it("returns null when v tag is absent", () => {
+    const event = buildKind1063Event({
+      sha256: bytesToHex(sha256(randomBytes(32))),
+      type: "image/jpeg",
+      filename: "photo.jpg",
+      nonce: bytesToHex(randomBytes(12)),
+      version: MIP04_VERSION,
+    });
+    // Remove the v tag
+    event.tags = event.tags.filter((t) => t[0] !== "v");
+    expect(getMip04AttachmentFromFileMetadataEvent(event)).toBeNull();
+  });
+
+  it("returns null when v tag does not match MIP04_VERSION", () => {
+    const sha = bytesToHex(sha256(randomBytes(32)));
+    const event = {
+      kind: 1063,
+      content: "",
+      tags: [
+        ["x", sha],
+        ["m", "image/jpeg"],
+        ["filename", "photo.jpg"],
+        ["n", bytesToHex(randomBytes(12))],
+        ["v", "mip04-v1"],
+      ],
+      id: "0".repeat(64),
+      pubkey: "0".repeat(64),
+      created_at: 0,
+      sig: "0".repeat(128),
+    };
+    expect(getMip04AttachmentFromFileMetadataEvent(event)).toBeNull();
+  });
+
+  it("returns null when n tag is absent", () => {
+    const attachment: Mip04MediaAttachment = {
+      sha256: bytesToHex(sha256(randomBytes(32))),
+      type: "image/jpeg",
+      filename: "photo.jpg",
+      nonce: bytesToHex(randomBytes(12)),
+      version: MIP04_VERSION,
+    };
+    const event = buildKind1063Event(attachment);
+    event.tags = event.tags.filter((t) => t[0] !== "n");
+    expect(getMip04AttachmentFromFileMetadataEvent(event)).toBeNull();
+  });
+
+  it("returns null when filename tag is absent", () => {
+    const attachment: Mip04MediaAttachment = {
+      sha256: bytesToHex(sha256(randomBytes(32))),
+      type: "image/jpeg",
+      filename: "photo.jpg",
+      nonce: bytesToHex(randomBytes(12)),
+      version: MIP04_VERSION,
+    };
+    const event = buildKind1063Event(attachment);
+    event.tags = event.tags.filter((t) => t[0] !== "filename");
+    expect(getMip04AttachmentFromFileMetadataEvent(event)).toBeNull();
+  });
+
+  it("returns a valid attachment for a well-formed event", () => {
+    const sha = bytesToHex(sha256(randomBytes(32)));
+    const nonce = bytesToHex(randomBytes(12));
+    const attachment: Mip04MediaAttachment = {
+      url: `https://example.com/blob/${sha}`,
+      sha256: sha,
+      type: "image/jpeg",
+      filename: "photo.jpg",
+      nonce,
+      version: MIP04_VERSION,
+    };
+    const event = buildKind1063Event(attachment);
+    const result = getMip04AttachmentFromFileMetadataEvent(event);
+
+    expect(result).not.toBeNull();
+    expect(result!.filename).toBe("photo.jpg");
+    expect(result!.nonce).toBe(nonce);
+    expect(result!.version).toBe(MIP04_VERSION);
+    expect(result!.sha256).toBe(sha);
+    expect(result!.type).toBe("image/jpeg");
+    expect(result!.url).toBe(`https://example.com/blob/${sha}`);
+  });
+
+  it("copies standard NIP-94 fields via applesauce", () => {
+    const sha = bytesToHex(sha256(randomBytes(32)));
+    const nonce = bytesToHex(randomBytes(12));
+    const attachment: Mip04MediaAttachment = {
+      sha256: sha,
+      type: "video/mp4",
+      dimensions: "1280x720",
+      blurhash: "LEHV6nWB2yk8",
+      alt: "A test clip",
+      size: 8192,
+      filename: "clip.mp4",
+      nonce,
+      version: MIP04_VERSION,
+    };
+    const event = buildKind1063Event(attachment);
+    const result = getMip04AttachmentFromFileMetadataEvent(event);
+
+    expect(result).not.toBeNull();
+    expect(result!.dimensions).toBe("1280x720");
+    expect(result!.blurhash).toBe("LEHV6nWB2yk8");
+    expect(result!.alt).toBe("A test clip");
+    expect(result!.size).toBe(8192);
+    expect(result!.type).toBe("video/mp4");
+    expect(result!.sha256).toBe(sha);
   });
 });

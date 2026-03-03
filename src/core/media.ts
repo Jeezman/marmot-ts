@@ -26,7 +26,12 @@ import {
 import { mlsExporter } from "ts-mls/keySchedule.js";
 import type { CiphersuiteImpl } from "ts-mls/crypto/ciphersuite.js";
 import type { ClientState } from "ts-mls/clientState.js";
+import {
+  getFileMetadata,
+  getFileMetadataFromImetaTag,
+} from "applesauce-common/helpers";
 import type { FileMetadata } from "applesauce-common/helpers";
+import type { NostrEvent } from "applesauce-core/helpers";
 
 // ---------------------------------------------------------------------------
 // Internals
@@ -306,4 +311,131 @@ export function decryptMediaFile(
   }
 
   return decrypted;
+}
+
+// ---------------------------------------------------------------------------
+// Parsing helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Splits the space-separated entries of an `imeta` tag into a key→value map.
+ *
+ * Each entry after the leading `"imeta"` element has the form `"key value"`.
+ * applesauce uses the same approach internally; we replicate it here to
+ * extract MIP-04-specific fields (`filename`, `n`, `v`) that applesauce does
+ * not know about and therefore silently drops from its returned
+ * {@link FileMetadata} object.
+ *
+ * @internal
+ */
+function parseRawImetaEntries(tag: string[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const part of tag.slice(1)) {
+    const match = part.match(/^(.+?)\s(.+)$/);
+    if (match) map.set(match[1], match[2]);
+  }
+  return map;
+}
+
+/**
+ * Parses an `imeta` tag array into a {@link Mip04MediaAttachment}.
+ *
+ * The MIP-04-specific fields (`filename`, `n`, `v`) are read directly from
+ * the raw tag entries because applesauce's {@link getFileMetadataFromImetaTag}
+ * only copies known NIP-92 fields and silently drops unknown keys. Standard
+ * NIP-92 fields (`url`, `type`/`m`, `sha256`/`x`, `size`, `dimensions`/`dim`,
+ * `blurhash`, `thumbnail`/`thumb`, `alt`, etc.) are delegated to applesauce.
+ *
+ * Returns `null` if:
+ * - The tag is not a valid `imeta` tag (first element is not `"imeta"`)
+ * - The `v` field is absent or does not match {@link MIP04_VERSION}
+ * - The required `n` (nonce) or `filename` fields are missing or empty
+ *
+ * Per the MIP-04 spec, clients MUST reject deprecated `mip04-v1` tags.
+ *
+ * @param tag - A raw `imeta` tag array from a Nostr event (e.g. `rumor.tags`)
+ * @returns A fully-typed {@link Mip04MediaAttachment}, or `null` if the tag is
+ *   not a valid MIP-04 v2 attachment
+ */
+export function parseMip04ImetaTag(tag: string[]): Mip04MediaAttachment | null {
+  if (tag[0] !== "imeta") return null;
+
+  // Parse raw entries to read MIP-04 fields that applesauce strips.
+  const raw = parseRawImetaEntries(tag);
+
+  const version = raw.get("v");
+  const nonce = raw.get("n");
+  const filename = raw.get("filename");
+
+  if (version !== MIP04_VERSION) return null;
+  if (!nonce || nonce.length === 0) return null;
+  if (!filename || filename.length === 0) return null;
+
+  // Delegate standard NIP-92 field parsing to applesauce.
+  const base = getFileMetadataFromImetaTag(tag);
+
+  return {
+    ...base,
+    filename,
+    nonce,
+    version: MIP04_VERSION,
+  };
+}
+
+/**
+ * Extracts all valid MIP-04 v2 attachments from a tag list.
+ *
+ * Non-`imeta` tags and `imeta` tags that fail MIP-04 validation (wrong or
+ * absent `v` field, missing `n`/`filename`) are silently skipped.
+ *
+ * @param tags - The `tags` array from a Nostr event or rumor
+ * @returns Array of valid {@link Mip04MediaAttachment} objects (may be empty)
+ */
+export function getMip04Attachments(tags: string[][]): Mip04MediaAttachment[] {
+  return tags
+    .filter((t) => t[0] === "imeta")
+    .map(parseMip04ImetaTag)
+    .filter((a): a is Mip04MediaAttachment => a !== null);
+}
+
+/**
+ * Extracts a MIP-04 v2 attachment from a NIP-94 kind 1063 file-metadata event.
+ *
+ * Kind 1063 events use flat tags (`url`, `m`, `x`, `filename`, `n`, `v`, …)
+ * rather than the space-separated `imeta` format. Standard NIP-94 fields are
+ * parsed by applesauce's {@link getFileMetadata}; the MIP-04-specific fields
+ * (`filename`, `n`, `v`) are read directly from the flat tag list.
+ *
+ * Returns `null` if:
+ * - The `v` tag is absent or does not match {@link MIP04_VERSION}
+ * - The required `n` (nonce) or `filename` tags are missing or empty
+ *
+ * @param event - A kind 1063 Nostr event
+ * @returns A fully-typed {@link Mip04MediaAttachment}, or `null` if the event
+ *   does not carry a valid MIP-04 v2 attachment
+ */
+export function getMip04AttachmentFromFileMetadataEvent(
+  event: NostrEvent,
+): Mip04MediaAttachment | null {
+  /** Helper: return the value of the first tag with the given name, or undefined. */
+  const getTag = (name: string): string | undefined =>
+    event.tags.find((t) => t[0] === name)?.[1];
+
+  const version = getTag("v");
+  const nonce = getTag("n");
+  const filename = getTag("filename");
+
+  if (version !== MIP04_VERSION) return null;
+  if (!nonce || nonce.length === 0) return null;
+  if (!filename || filename.length === 0) return null;
+
+  // Delegate standard NIP-94 tag parsing to applesauce.
+  const base = getFileMetadata(event);
+
+  return {
+    ...base,
+    filename,
+    nonce,
+    version: MIP04_VERSION,
+  };
 }
