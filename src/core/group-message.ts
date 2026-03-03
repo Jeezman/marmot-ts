@@ -54,9 +54,9 @@ export async function decryptGroupMessageEvent(
   try {
     const key = await getGroupEventEncryptionKey(clientState, ciphersuite);
     const payload = decodeBase64(message.content);
-    if (payload.length < 12) {
+    if (payload.length < 28) {
       throw new Error(
-        "Malformed group event content: expected at least 12 bytes",
+        "Malformed group event content: expected at least 28 bytes",
       );
     }
 
