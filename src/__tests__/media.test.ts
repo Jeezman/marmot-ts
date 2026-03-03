@@ -9,13 +9,13 @@ import { createSimpleGroup } from "../core/group.js";
 import {
   canonicalizeMimeType,
   decryptMediaFile,
-  deriveMip04FileKey,
+  deriveMediaEncryptionKey,
   encryptMediaFile,
-  getMip04AttachmentFromFileMetadataEvent,
-  getMip04Attachments,
+  getMediaAttachmentFromFileEvent,
+  getMediaAttachments,
   MIP04_VERSION,
-  parseMip04ImetaTag,
-  type Mip04MediaAttachment,
+  parseMediaImetaTag,
+  type MediaAttachment,
 } from "../core/media.js";
 
 // ---------------------------------------------------------------------------
@@ -37,12 +37,12 @@ async function makeClientState() {
   return { clientState, ciphersuite: impl };
 }
 
-/** Build a minimal valid Mip04MediaAttachment for a given file. */
+/** Build a minimal valid MediaAttachment for a given file. */
 function makeAttachment(
   file: Uint8Array,
   mimeType = "image/jpeg",
   filename = "photo.jpg",
-): Mip04MediaAttachment {
+): MediaAttachment {
   return {
     sha256: bytesToHex(sha256(file)),
     type: mimeType,
@@ -83,13 +83,13 @@ describe("canonicalizeMimeType", () => {
 });
 
 // ---------------------------------------------------------------------------
-// deriveMip04FileKey
+// deriveMediaEncryptionKey
 // ---------------------------------------------------------------------------
 
-describe("deriveMip04FileKey", () => {
+describe("deriveMediaEncryptionKey", () => {
   it("returns 32 bytes", async () => {
     const { clientState, ciphersuite } = await makeClientState();
-    const key = await deriveMip04FileKey(
+    const key = await deriveMediaEncryptionKey(
       clientState,
       ciphersuite,
       makeAttachment(randomBytes(100)),
@@ -101,19 +101,27 @@ describe("deriveMip04FileKey", () => {
   it("is deterministic for the same epoch + file metadata", async () => {
     const { clientState, ciphersuite } = await makeClientState();
     const attachment = makeAttachment(randomBytes(100));
-    const a = await deriveMip04FileKey(clientState, ciphersuite, attachment);
-    const b = await deriveMip04FileKey(clientState, ciphersuite, attachment);
+    const a = await deriveMediaEncryptionKey(
+      clientState,
+      ciphersuite,
+      attachment,
+    );
+    const b = await deriveMediaEncryptionKey(
+      clientState,
+      ciphersuite,
+      attachment,
+    );
     expect(bytesToHex(a)).toBe(bytesToHex(b));
   });
 
   it("produces different keys for different file hashes", async () => {
     const { clientState, ciphersuite } = await makeClientState();
-    const keyA = await deriveMip04FileKey(
+    const keyA = await deriveMediaEncryptionKey(
       clientState,
       ciphersuite,
       makeAttachment(randomBytes(100)),
     );
-    const keyB = await deriveMip04FileKey(
+    const keyB = await deriveMediaEncryptionKey(
       clientState,
       ciphersuite,
       makeAttachment(randomBytes(100)),
@@ -124,12 +132,12 @@ describe("deriveMip04FileKey", () => {
   it("produces different keys for different MIME types", async () => {
     const { clientState, ciphersuite } = await makeClientState();
     const file = randomBytes(100);
-    const keyA = await deriveMip04FileKey(
+    const keyA = await deriveMediaEncryptionKey(
       clientState,
       ciphersuite,
       makeAttachment(file, "image/jpeg"),
     );
-    const keyB = await deriveMip04FileKey(
+    const keyB = await deriveMediaEncryptionKey(
       clientState,
       ciphersuite,
       makeAttachment(file, "video/mp4"),
@@ -140,12 +148,12 @@ describe("deriveMip04FileKey", () => {
   it("produces different keys for different filenames", async () => {
     const { clientState, ciphersuite } = await makeClientState();
     const file = randomBytes(100);
-    const keyA = await deriveMip04FileKey(
+    const keyA = await deriveMediaEncryptionKey(
       clientState,
       ciphersuite,
       makeAttachment(file, "image/jpeg", "photo.jpg"),
     );
-    const keyB = await deriveMip04FileKey(
+    const keyB = await deriveMediaEncryptionKey(
       clientState,
       ciphersuite,
       makeAttachment(file, "image/jpeg", "other.jpg"),
@@ -156,17 +164,17 @@ describe("deriveMip04FileKey", () => {
   it("canonicalizes MIME type before key derivation", async () => {
     const { clientState, ciphersuite } = await makeClientState();
     const file = randomBytes(100);
-    const keyLower = await deriveMip04FileKey(
+    const keyLower = await deriveMediaEncryptionKey(
       clientState,
       ciphersuite,
       makeAttachment(file, "image/jpeg"),
     );
-    const keyUpper = await deriveMip04FileKey(
+    const keyUpper = await deriveMediaEncryptionKey(
       clientState,
       ciphersuite,
       makeAttachment(file, "IMAGE/JPEG"),
     );
-    const keyParams = await deriveMip04FileKey(
+    const keyParams = await deriveMediaEncryptionKey(
       clientState,
       ciphersuite,
       makeAttachment(file, "image/jpeg; charset=utf-8"),
@@ -180,9 +188,9 @@ describe("deriveMip04FileKey", () => {
     const attachment = {
       type: "image/jpeg",
       filename: "photo.jpg",
-    } as unknown as Mip04MediaAttachment;
+    } as unknown as MediaAttachment;
     await expect(
-      deriveMip04FileKey(clientState, ciphersuite, attachment),
+      deriveMediaEncryptionKey(clientState, ciphersuite, attachment),
     ).rejects.toThrow("sha256");
   });
 
@@ -191,9 +199,9 @@ describe("deriveMip04FileKey", () => {
     const attachment = {
       sha256: bytesToHex(sha256(randomBytes(32))),
       filename: "photo.jpg",
-    } as unknown as Mip04MediaAttachment;
+    } as unknown as MediaAttachment;
     await expect(
-      deriveMip04FileKey(clientState, ciphersuite, attachment),
+      deriveMediaEncryptionKey(clientState, ciphersuite, attachment),
     ).rejects.toThrow("type");
   });
 });
@@ -212,7 +220,7 @@ describe("encryptMediaFile / decryptMediaFile", () => {
       "data.bin",
     );
 
-    const fileKey = await deriveMip04FileKey(
+    const fileKey = await deriveMediaEncryptionKey(
       clientState,
       ciphersuite,
       attachment,
@@ -230,7 +238,7 @@ describe("encryptMediaFile / decryptMediaFile", () => {
     const file = randomBytes(16384);
     const attachment = makeAttachment(file, "image/png", "large.png");
 
-    const fileKey = await deriveMip04FileKey(
+    const fileKey = await deriveMediaEncryptionKey(
       clientState,
       ciphersuite,
       attachment,
@@ -248,7 +256,7 @@ describe("encryptMediaFile / decryptMediaFile", () => {
     const file = randomBytes(64);
     const attachment = makeAttachment(file, "image/jpeg", "img.jpg");
 
-    const fileKey = await deriveMip04FileKey(
+    const fileKey = await deriveMediaEncryptionKey(
       clientState,
       ciphersuite,
       attachment,
@@ -267,7 +275,7 @@ describe("encryptMediaFile / decryptMediaFile", () => {
     const file = randomBytes(32);
     const attachment = makeAttachment(file, "IMAGE/JPEG", "img.jpg");
 
-    const fileKey = await deriveMip04FileKey(
+    const fileKey = await deriveMediaEncryptionKey(
       clientState,
       ciphersuite,
       attachment,
@@ -281,7 +289,7 @@ describe("encryptMediaFile / decryptMediaFile", () => {
     const file = randomBytes(64);
     const attachment = makeAttachment(file);
 
-    const fileKey = await deriveMip04FileKey(
+    const fileKey = await deriveMediaEncryptionKey(
       clientState,
       ciphersuite,
       attachment,
@@ -300,7 +308,7 @@ describe("encryptMediaFile / decryptMediaFile", () => {
       "test.bin",
     );
 
-    const fileKey = await deriveMip04FileKey(
+    const fileKey = await deriveMediaEncryptionKey(
       clientState,
       ciphersuite,
       attachment,
@@ -312,7 +320,7 @@ describe("encryptMediaFile / decryptMediaFile", () => {
   it("extra FileMetadata fields are preserved on the returned attachment", async () => {
     const { clientState, ciphersuite } = await makeClientState();
     const file = randomBytes(32);
-    const attachment: Mip04MediaAttachment = {
+    const attachment: MediaAttachment = {
       ...makeAttachment(file),
       url: "https://example.com/blob",
       dimensions: "800x600",
@@ -320,7 +328,7 @@ describe("encryptMediaFile / decryptMediaFile", () => {
       alt: "A test image",
     };
 
-    const fileKey = await deriveMip04FileKey(
+    const fileKey = await deriveMediaEncryptionKey(
       clientState,
       ciphersuite,
       attachment,
@@ -338,7 +346,7 @@ describe("encryptMediaFile / decryptMediaFile", () => {
     const file = randomBytes(64);
     const attachment = makeAttachment(file);
 
-    const fileKey = await deriveMip04FileKey(
+    const fileKey = await deriveMediaEncryptionKey(
       clientState,
       ciphersuite,
       attachment,
@@ -357,7 +365,7 @@ describe("encryptMediaFile / decryptMediaFile", () => {
     const file = randomBytes(64);
     const attachment = makeAttachment(file, "image/jpeg", "real.jpg");
 
-    const fileKey = await deriveMip04FileKey(
+    const fileKey = await deriveMediaEncryptionKey(
       clientState,
       ciphersuite,
       attachment,
@@ -380,7 +388,7 @@ describe("encryptMediaFile / decryptMediaFile", () => {
     const file = randomBytes(64);
     const attachment = makeAttachment(file, "image/jpeg", "file.jpg");
 
-    const fileKey = await deriveMip04FileKey(
+    const fileKey = await deriveMediaEncryptionKey(
       clientState,
       ciphersuite,
       attachment,
@@ -400,7 +408,7 @@ describe("encryptMediaFile / decryptMediaFile", () => {
     const file = randomBytes(64);
     const attachment = makeAttachment(file);
 
-    const fileKey = await deriveMip04FileKey(
+    const fileKey = await deriveMediaEncryptionKey(
       clientState,
       ciphersuite,
       attachment,
@@ -416,7 +424,7 @@ describe("encryptMediaFile / decryptMediaFile", () => {
   });
 
   it("throws when nonce is missing from attachment", () => {
-    const attachment: Mip04MediaAttachment = {
+    const attachment: MediaAttachment = {
       ...makeAttachment(randomBytes(32)),
       nonce: "",
     };
@@ -430,7 +438,7 @@ describe("encryptMediaFile / decryptMediaFile", () => {
     const file = randomBytes(64);
     const attachment = makeAttachment(file);
 
-    const fileKey = await deriveMip04FileKey(
+    const fileKey = await deriveMediaEncryptionKey(
       clientState,
       ciphersuite,
       attachment,
@@ -454,11 +462,11 @@ describe("encryptMediaFile / decryptMediaFile", () => {
 // ---------------------------------------------------------------------------
 
 /**
- * Builds a valid MIP-04 v2 `imeta` tag array from a {@link Mip04MediaAttachment}.
+ * Builds a valid MIP-04 v2 `imeta` tag array from a {@link MediaAttachment}.
  * Mirrors what `createImetaTagForAttachment` from applesauce would emit for the
  * standard NIP-92 fields, with the MIP-04 extensions appended.
  */
-function buildImetaTag(attachment: Mip04MediaAttachment): string[] {
+function buildImetaTag(attachment: MediaAttachment): string[] {
   const parts: string[] = ["imeta"];
   if (attachment.url) parts.push(`url ${attachment.url}`);
   if (attachment.type) parts.push(`m ${attachment.type}`);
@@ -474,8 +482,8 @@ function buildImetaTag(attachment: Mip04MediaAttachment): string[] {
 }
 
 /** Minimal valid MIP-04 v2 imeta tag with only the required MIP-04 fields. */
-function minimalImetaTag(overrides?: Partial<Mip04MediaAttachment>): string[] {
-  const base: Mip04MediaAttachment = {
+function minimalImetaTag(overrides?: Partial<MediaAttachment>): string[] {
+  const base: MediaAttachment = {
     sha256: bytesToHex(sha256(randomBytes(32))),
     type: "image/jpeg",
     filename: "photo.jpg",
@@ -487,14 +495,14 @@ function minimalImetaTag(overrides?: Partial<Mip04MediaAttachment>): string[] {
 }
 
 // ---------------------------------------------------------------------------
-// parseMip04ImetaTag
+// parseMediaImetaTag
 // ---------------------------------------------------------------------------
 
-describe("parseMip04ImetaTag", () => {
+describe("parseMediaImetaTag", () => {
   it("returns null for non-imeta tags", () => {
-    expect(parseMip04ImetaTag(["p", "pubkey"])).toBeNull();
-    expect(parseMip04ImetaTag(["e", "eventid"])).toBeNull();
-    expect(parseMip04ImetaTag([])).toBeNull();
+    expect(parseMediaImetaTag(["p", "pubkey"])).toBeNull();
+    expect(parseMediaImetaTag(["e", "eventid"])).toBeNull();
+    expect(parseMediaImetaTag([])).toBeNull();
   });
 
   it("returns null when v field is absent", () => {
@@ -505,14 +513,14 @@ describe("parseMip04ImetaTag", () => {
       "filename photo.jpg",
       "n " + bytesToHex(randomBytes(12)),
     ];
-    expect(parseMip04ImetaTag(tag)).toBeNull();
+    expect(parseMediaImetaTag(tag)).toBeNull();
   });
 
   it("returns null when v field does not match MIP04_VERSION", () => {
     const tag = minimalImetaTag();
     // Replace v field with legacy version
     const tampered = tag.map((p) => (p.startsWith("v ") ? "v mip04-v1" : p));
-    expect(parseMip04ImetaTag(tampered)).toBeNull();
+    expect(parseMediaImetaTag(tampered)).toBeNull();
   });
 
   it("returns null when n (nonce) is absent", () => {
@@ -523,7 +531,7 @@ describe("parseMip04ImetaTag", () => {
       "filename photo.jpg",
       "v " + MIP04_VERSION,
     ];
-    expect(parseMip04ImetaTag(tag)).toBeNull();
+    expect(parseMediaImetaTag(tag)).toBeNull();
   });
 
   it("returns null when n is too short (not 12 bytes encoded)", () => {
@@ -535,7 +543,7 @@ describe("parseMip04ImetaTag", () => {
       "n " + bytesToHex(randomBytes(11)), // 22 chars — one byte short
       "v " + MIP04_VERSION,
     ];
-    expect(parseMip04ImetaTag(tag)).toBeNull();
+    expect(parseMediaImetaTag(tag)).toBeNull();
   });
 
   it("returns null when n is too long (more than 12 bytes encoded)", () => {
@@ -547,7 +555,7 @@ describe("parseMip04ImetaTag", () => {
       "n " + bytesToHex(randomBytes(13)), // 26 chars — one byte over
       "v " + MIP04_VERSION,
     ];
-    expect(parseMip04ImetaTag(tag)).toBeNull();
+    expect(parseMediaImetaTag(tag)).toBeNull();
   });
 
   it("returns null when x (sha256) is absent", () => {
@@ -558,7 +566,7 @@ describe("parseMip04ImetaTag", () => {
       "n " + bytesToHex(randomBytes(12)),
       "v " + MIP04_VERSION,
     ];
-    expect(parseMip04ImetaTag(tag)).toBeNull();
+    expect(parseMediaImetaTag(tag)).toBeNull();
   });
 
   it("returns null when x is wrong length", () => {
@@ -570,7 +578,7 @@ describe("parseMip04ImetaTag", () => {
       "n " + bytesToHex(randomBytes(12)),
       "v " + MIP04_VERSION,
     ];
-    expect(parseMip04ImetaTag(tag)).toBeNull();
+    expect(parseMediaImetaTag(tag)).toBeNull();
   });
 
   it("returns null when m (MIME type) is absent", () => {
@@ -581,7 +589,7 @@ describe("parseMip04ImetaTag", () => {
       "n " + bytesToHex(randomBytes(12)),
       "v " + MIP04_VERSION,
     ];
-    expect(parseMip04ImetaTag(tag)).toBeNull();
+    expect(parseMediaImetaTag(tag)).toBeNull();
   });
 
   it("returns null when m is not a valid MIME type", () => {
@@ -593,7 +601,7 @@ describe("parseMip04ImetaTag", () => {
       "n " + bytesToHex(randomBytes(12)),
       "v " + MIP04_VERSION,
     ];
-    expect(parseMip04ImetaTag(tag)).toBeNull();
+    expect(parseMediaImetaTag(tag)).toBeNull();
   });
 
   it("returns null when filename is absent", () => {
@@ -604,7 +612,7 @@ describe("parseMip04ImetaTag", () => {
       "n " + bytesToHex(randomBytes(12)),
       "v " + MIP04_VERSION,
     ];
-    expect(parseMip04ImetaTag(tag)).toBeNull();
+    expect(parseMediaImetaTag(tag)).toBeNull();
   });
 
   it("returns a valid attachment for a well-formed tag", () => {
@@ -620,7 +628,7 @@ describe("parseMip04ImetaTag", () => {
       `v ${MIP04_VERSION}`,
     ];
 
-    const result = parseMip04ImetaTag(tag);
+    const result = parseMediaImetaTag(tag);
     expect(result).not.toBeNull();
     expect(result!.filename).toBe("photo.jpg");
     expect(result!.nonce).toBe(nonce);
@@ -646,7 +654,7 @@ describe("parseMip04ImetaTag", () => {
       `v ${MIP04_VERSION}`,
     ];
 
-    const result = parseMip04ImetaTag(tag);
+    const result = parseMediaImetaTag(tag);
     expect(result).not.toBeNull();
     expect(result!.dimensions).toBe("1920x1080");
     expect(result!.blurhash).toBe("LEHV6nWB2yk8");
@@ -656,18 +664,18 @@ describe("parseMip04ImetaTag", () => {
     expect(result!.sha256).toBe(sha);
   });
 
-  it("round-trips through encryptMediaFile → buildImetaTag → parseMip04ImetaTag", async () => {
+  it("round-trips through encryptMediaFile → buildImetaTag → parseMediaImetaTag", async () => {
     const { clientState, ciphersuite } = await makeClientState();
     const file = randomBytes(256);
     const attachment = makeAttachment(file, "image/png", "snap.png");
-    const fileKey = await deriveMip04FileKey(
+    const fileKey = await deriveMediaEncryptionKey(
       clientState,
       ciphersuite,
       attachment,
     );
     const { attachment: filled } = encryptMediaFile(file, fileKey, attachment);
     const tag = buildImetaTag(filled);
-    const parsed = parseMip04ImetaTag(tag);
+    const parsed = parseMediaImetaTag(tag);
 
     expect(parsed).not.toBeNull();
     expect(parsed!.filename).toBe("snap.png");
@@ -679,21 +687,21 @@ describe("parseMip04ImetaTag", () => {
 });
 
 // ---------------------------------------------------------------------------
-// getMip04Attachments
+// getMediaAttachments
 // ---------------------------------------------------------------------------
 
-describe("getMip04Attachments", () => {
+describe("getMediaAttachments", () => {
   it("returns an empty array when there are no imeta tags", () => {
     const tags = [
       ["p", "pubkey"],
       ["e", "eventid"],
     ];
-    expect(getMip04Attachments(tags)).toEqual([]);
+    expect(getMediaAttachments(tags)).toEqual([]);
   });
 
   it("skips non-imeta tags", () => {
     const tags = [["p", "pubkey"], minimalImetaTag()];
-    expect(getMip04Attachments(tags)).toHaveLength(1);
+    expect(getMediaAttachments(tags)).toHaveLength(1);
   });
 
   it("skips imeta tags that fail MIP-04 validation", () => {
@@ -701,12 +709,12 @@ describe("getMip04Attachments", () => {
     const noVersion = valid.filter((p) => !p.startsWith("v "));
     const noNonce = valid.filter((p) => !p.startsWith("n "));
     const tags = [noVersion, noNonce, valid];
-    expect(getMip04Attachments(tags)).toHaveLength(1);
+    expect(getMediaAttachments(tags)).toHaveLength(1);
   });
 
   it("returns all valid MIP-04 v2 attachments", () => {
     const tags = [minimalImetaTag(), minimalImetaTag(), minimalImetaTag()];
-    const results = getMip04Attachments(tags);
+    const results = getMediaAttachments(tags);
     expect(results).toHaveLength(3);
     for (const r of results) {
       expect(r.version).toBe(MIP04_VERSION);
@@ -715,15 +723,15 @@ describe("getMip04Attachments", () => {
 });
 
 // ---------------------------------------------------------------------------
-// getMip04AttachmentFromFileMetadataEvent
+// getMediaAttachmentFromFileEvent
 // ---------------------------------------------------------------------------
 
-describe("getMip04AttachmentFromFileMetadataEvent", () => {
-  /** Builds a minimal kind 1063 event from a Mip04MediaAttachment. */
+describe("getMediaAttachmentFromFileEvent", () => {
+  /** Builds a minimal kind 1063 event from a MediaAttachment. */
   function buildKind1063Event(
-    attachment: Mip04MediaAttachment,
+    attachment: MediaAttachment,
     overrideTags?: string[][],
-  ): Parameters<typeof getMip04AttachmentFromFileMetadataEvent>[0] {
+  ): Parameters<typeof getMediaAttachmentFromFileEvent>[0] {
     const tags: string[][] = [
       ...(attachment.url ? [["url", attachment.url]] : []),
       ...(attachment.type ? [["m", attachment.type]] : []),
@@ -760,7 +768,7 @@ describe("getMip04AttachmentFromFileMetadataEvent", () => {
     });
     // Remove the v tag
     event.tags = event.tags.filter((t) => t[0] !== "v");
-    expect(getMip04AttachmentFromFileMetadataEvent(event)).toBeNull();
+    expect(getMediaAttachmentFromFileEvent(event)).toBeNull();
   });
 
   it("returns null when v tag does not match MIP04_VERSION", () => {
@@ -780,11 +788,11 @@ describe("getMip04AttachmentFromFileMetadataEvent", () => {
       created_at: 0,
       sig: "0".repeat(128),
     };
-    expect(getMip04AttachmentFromFileMetadataEvent(event)).toBeNull();
+    expect(getMediaAttachmentFromFileEvent(event)).toBeNull();
   });
 
   it("returns null when n tag is absent", () => {
-    const attachment: Mip04MediaAttachment = {
+    const attachment: MediaAttachment = {
       sha256: bytesToHex(sha256(randomBytes(32))),
       type: "image/jpeg",
       filename: "photo.jpg",
@@ -793,7 +801,7 @@ describe("getMip04AttachmentFromFileMetadataEvent", () => {
     };
     const event = buildKind1063Event(attachment);
     event.tags = event.tags.filter((t) => t[0] !== "n");
-    expect(getMip04AttachmentFromFileMetadataEvent(event)).toBeNull();
+    expect(getMediaAttachmentFromFileEvent(event)).toBeNull();
   });
 
   it("returns null when n is too short (not 12 bytes encoded)", () => {
@@ -808,7 +816,7 @@ describe("getMip04AttachmentFromFileMetadataEvent", () => {
     event.tags = event.tags.map((t) =>
       t[0] === "n" ? ["n", bytesToHex(randomBytes(11))] : t,
     );
-    expect(getMip04AttachmentFromFileMetadataEvent(event)).toBeNull();
+    expect(getMediaAttachmentFromFileEvent(event)).toBeNull();
   });
 
   it("returns null when n is too long (more than 12 bytes encoded)", () => {
@@ -823,11 +831,11 @@ describe("getMip04AttachmentFromFileMetadataEvent", () => {
     event.tags = event.tags.map((t) =>
       t[0] === "n" ? ["n", bytesToHex(randomBytes(13))] : t,
     );
-    expect(getMip04AttachmentFromFileMetadataEvent(event)).toBeNull();
+    expect(getMediaAttachmentFromFileEvent(event)).toBeNull();
   });
 
   it("returns null when x (sha256) tag is absent", () => {
-    const attachment: Mip04MediaAttachment = {
+    const attachment: MediaAttachment = {
       sha256: bytesToHex(sha256(randomBytes(32))),
       type: "image/jpeg",
       filename: "photo.jpg",
@@ -836,7 +844,7 @@ describe("getMip04AttachmentFromFileMetadataEvent", () => {
     };
     const event = buildKind1063Event(attachment);
     event.tags = event.tags.filter((t) => t[0] !== "x");
-    expect(getMip04AttachmentFromFileMetadataEvent(event)).toBeNull();
+    expect(getMediaAttachmentFromFileEvent(event)).toBeNull();
   });
 
   it("returns null when x is wrong length", () => {
@@ -851,11 +859,11 @@ describe("getMip04AttachmentFromFileMetadataEvent", () => {
     event.tags = event.tags.map((t) =>
       t[0] === "x" ? ["x", bytesToHex(randomBytes(31))] : t,
     );
-    expect(getMip04AttachmentFromFileMetadataEvent(event)).toBeNull();
+    expect(getMediaAttachmentFromFileEvent(event)).toBeNull();
   });
 
   it("returns null when m (MIME type) tag is absent", () => {
-    const attachment: Mip04MediaAttachment = {
+    const attachment: MediaAttachment = {
       sha256: bytesToHex(sha256(randomBytes(32))),
       type: "image/jpeg",
       filename: "photo.jpg",
@@ -864,7 +872,7 @@ describe("getMip04AttachmentFromFileMetadataEvent", () => {
     };
     const event = buildKind1063Event(attachment);
     event.tags = event.tags.filter((t) => t[0] !== "m");
-    expect(getMip04AttachmentFromFileMetadataEvent(event)).toBeNull();
+    expect(getMediaAttachmentFromFileEvent(event)).toBeNull();
   });
 
   it("returns null when m is not a valid MIME type", () => {
@@ -878,11 +886,11 @@ describe("getMip04AttachmentFromFileMetadataEvent", () => {
     event.tags = event.tags.map((t) =>
       t[0] === "m" ? ["m", "notamimetype"] : t,
     );
-    expect(getMip04AttachmentFromFileMetadataEvent(event)).toBeNull();
+    expect(getMediaAttachmentFromFileEvent(event)).toBeNull();
   });
 
   it("returns null when filename tag is absent", () => {
-    const attachment: Mip04MediaAttachment = {
+    const attachment: MediaAttachment = {
       sha256: bytesToHex(sha256(randomBytes(32))),
       type: "image/jpeg",
       filename: "photo.jpg",
@@ -891,13 +899,13 @@ describe("getMip04AttachmentFromFileMetadataEvent", () => {
     };
     const event = buildKind1063Event(attachment);
     event.tags = event.tags.filter((t) => t[0] !== "filename");
-    expect(getMip04AttachmentFromFileMetadataEvent(event)).toBeNull();
+    expect(getMediaAttachmentFromFileEvent(event)).toBeNull();
   });
 
   it("returns a valid attachment for a well-formed event", () => {
     const sha = bytesToHex(sha256(randomBytes(32)));
     const nonce = bytesToHex(randomBytes(12));
-    const attachment: Mip04MediaAttachment = {
+    const attachment: MediaAttachment = {
       url: `https://example.com/blob/${sha}`,
       sha256: sha,
       type: "image/jpeg",
@@ -906,7 +914,7 @@ describe("getMip04AttachmentFromFileMetadataEvent", () => {
       version: MIP04_VERSION,
     };
     const event = buildKind1063Event(attachment);
-    const result = getMip04AttachmentFromFileMetadataEvent(event);
+    const result = getMediaAttachmentFromFileEvent(event);
 
     expect(result).not.toBeNull();
     expect(result!.filename).toBe("photo.jpg");
@@ -920,7 +928,7 @@ describe("getMip04AttachmentFromFileMetadataEvent", () => {
   it("copies standard NIP-94 fields via applesauce", () => {
     const sha = bytesToHex(sha256(randomBytes(32)));
     const nonce = bytesToHex(randomBytes(12));
-    const attachment: Mip04MediaAttachment = {
+    const attachment: MediaAttachment = {
       sha256: sha,
       type: "video/mp4",
       dimensions: "1280x720",
@@ -932,7 +940,7 @@ describe("getMip04AttachmentFromFileMetadataEvent", () => {
       version: MIP04_VERSION,
     };
     const event = buildKind1063Event(attachment);
-    const result = getMip04AttachmentFromFileMetadataEvent(event);
+    const result = getMediaAttachmentFromFileEvent(event);
 
     expect(result).not.toBeNull();
     expect(result!.dimensions).toBe("1280x720");

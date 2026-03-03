@@ -113,4 +113,49 @@ export class GroupMediaStore
     await this.backend.clear();
     this.emit("cleared");
   }
+
+  /**
+   * Async generator that yields the full list of {@link MediaAttachment}
+   * entries whenever the store changes. The current snapshot is emitted
+   * immediately on subscription, then again after every `mediaAdded`,
+   * `mediaRemoved`, or `cleared` event.
+   *
+   * The generator runs until the caller breaks out of the loop or the
+   * consuming iterator is garbage-collected (via the `finally` cleanup).
+   */
+  async *subscribe(): AsyncGenerator<MediaAttachment[]> {
+    yield await this.listMedia();
+
+    let pending = false;
+    let nextResolve: (() => void) | null = null;
+
+    const notify = () => {
+      if (nextResolve) {
+        nextResolve();
+        nextResolve = null;
+      } else {
+        pending = true;
+      }
+    };
+
+    this.on("mediaAdded", notify);
+    this.on("mediaRemoved", notify);
+    this.on("cleared", notify);
+
+    try {
+      while (true) {
+        if (!pending) {
+          await new Promise<void>((r) => {
+            nextResolve = r;
+          });
+        }
+        pending = false;
+        yield await this.listMedia();
+      }
+    } finally {
+      this.off("mediaAdded", notify);
+      this.off("mediaRemoved", notify);
+      this.off("cleared", notify);
+    }
+  }
 }

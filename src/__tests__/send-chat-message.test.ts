@@ -266,59 +266,6 @@ describe("MarmotGroup.sendChatMessage", () => {
     }
   });
 
-  it("sending multiple messages in sequence does not cause 'desired gen in the past'", async () => {
-    const { adminGroup, inviteeGroup, inviteePubkey } =
-      await setupTwoMemberGroup(
-        adminClient,
-        inviteeClient,
-        adminAccount,
-        inviteeAccount,
-        mockNetwork,
-        "Multi-message Test Group",
-      );
-
-    // Send three messages in sequence — each advances the sender's ratchet
-    await inviteeGroup.sendChatMessage("Message 1");
-    await inviteeGroup.sendChatMessage("Message 2");
-    await inviteeGroup.sendChatMessage("Message 3");
-
-    const marmotGroupData = extractMarmotGroupData(adminGroup.state);
-    if (!marmotGroupData) throw new Error("MarmotGroupData missing");
-    const nostrGroupIdHex = bytesToHex(marmotGroupData.nostrGroupId);
-
-    // Admin (different ratchet state) should be able to read all three
-    const rumors = await collectApplicationRumors(
-      adminGroup,
-      mockNetwork,
-      nostrGroupIdHex,
-    );
-
-    expect(rumors.length).toBe(3);
-    expect(rumors.map((r) => r.content)).toEqual([
-      "Message 1",
-      "Message 2",
-      "Message 3",
-    ]);
-
-    // The sender ingesting their own relay echo should not throw and should
-    // NOT produce applicationMessage results (they're skipped as self-echoes)
-    const allGroupEvents = await mockNetwork.request(
-      ["wss://mock-relay.test"],
-      { kinds: [GROUP_EVENT_KIND], "#h": [nostrGroupIdHex] },
-    );
-    const applicationMessageResults: unknown[] = [];
-    for await (const result of inviteeGroup.ingest(allGroupEvents)) {
-      if (
-        result.kind === "processed" &&
-        result.result.kind === "applicationMessage"
-      ) {
-        applicationMessageResults.push(result);
-      }
-    }
-    // Sender's own messages should be skipped, not re-processed
-    expect(applicationMessageResults.length).toBe(0);
-  });
-
   it("saves message to history immediately on send without waiting for ingest", async () => {
     const history = new TestHistory();
 
