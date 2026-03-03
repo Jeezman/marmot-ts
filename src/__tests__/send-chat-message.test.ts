@@ -15,7 +15,10 @@ import { getMarmotGroupData } from "../core/client-state.js";
 import { deserializeApplicationData } from "../core/group-message.js";
 import { GROUP_EVENT_KIND, KEY_PACKAGE_KIND } from "../core/protocol.js";
 import { KeyValueGroupStateBackend } from "../store/adapters/key-value-group-state-backend.js";
-import { KeyPackageStore, type StoredKeyPackage } from "../store/key-package-store.js";
+import {
+  KeyPackageStore,
+  type StoredKeyPackage,
+} from "../store/key-package-store.js";
 import { MockNetwork } from "./helpers/mock-network.js";
 import { MemoryBackend } from "./ingest-commit-race.test.js";
 
@@ -367,7 +370,9 @@ describe("MarmotGroup.sendChatMessage", () => {
   });
 
   it("restart path: ingesting own relay echo does not break flow", async () => {
-    const inviteeGroupBackend = new KeyValueGroupStateBackend(new MemoryBackend());
+    const inviteeGroupBackend = new KeyValueGroupStateBackend(
+      new MemoryBackend(),
+    );
     const inviteeKeyPackageBackend = new MemoryBackend<StoredKeyPackage>();
 
     const inviteeClientBeforeRestart = new MarmotClient({
