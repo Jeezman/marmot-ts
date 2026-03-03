@@ -39,7 +39,9 @@ import { KeyPackageStore } from "../store/key-package-store.js";
 import { logger } from "../utils/debug.js";
 import {
   BaseGroupHistory,
+  BaseGroupMedia,
   GroupHistoryFactory,
+  GroupMediaFactory,
   MarmotGroup,
 } from "./group/marmot-group.js";
 import { KeyPackageManager } from "./key-package-manager.js";
@@ -49,6 +51,7 @@ const log = logger.extend("client");
 
 export type MarmotClientOptions<
   THistory extends BaseGroupHistory | undefined = undefined,
+  TMedia extends BaseGroupMedia | undefined = undefined,
 > = {
   /** The signer used for the clients identity */
   signer: EventSigner;
@@ -65,25 +68,30 @@ export type MarmotClientOptions<
 } & (THistory extends undefined
   ? {}
   : {
-      /** The group history interface to be passed to group instaces */
+      /** The group history interface to be passed to group instance */
       historyFactory: GroupHistoryFactory<THistory>;
-    });
+    }) &
+  (TMedia extends undefined
+    ? {}
+    : {
+        /** The group media interface to be passed to group instance */
+        mediaFactory: GroupMediaFactory<TMedia>;
+      });
 
-/** Given a MarmotClient type, returns the MarmotGroup class type with the same THistory. */
-export type InferGroupType<TClient extends MarmotClient<any>> =
-  TClient extends MarmotClient<infer THistory> ? MarmotGroup<THistory> : never;
-
-type MarmotClientEvents<THistory extends BaseGroupHistory | undefined = any> = {
+type MarmotClientEvents<
+  THistory extends BaseGroupHistory | undefined = any,
+  TMedia extends BaseGroupMedia | undefined = any,
+> = {
   /** Emitted when the groups array is updated */
-  groupsUpdated: (groups: MarmotGroup<THistory>[]) => void;
+  groupsUpdated: (groups: MarmotGroup<THistory, TMedia>[]) => void;
   /** Emitted when a group is loaded from the store */
-  groupLoaded: (group: MarmotGroup<THistory>) => void;
+  groupLoaded: (group: MarmotGroup<THistory, TMedia>) => void;
   /** Emitted when a new group is created */
-  groupCreated: (group: MarmotGroup<THistory>) => void;
+  groupCreated: (group: MarmotGroup<THistory, TMedia>) => void;
   /** Emitted when a group is imported from a ClientState object */
-  groupImported: (group: MarmotGroup<THistory>) => void;
+  groupImported: (group: MarmotGroup<THistory, TMedia>) => void;
   /** Emitted when a group is joined */
-  groupJoined: (group: MarmotGroup<THistory>) => void;
+  groupJoined: (group: MarmotGroup<THistory, TMedia>) => void;
   /** Emitted when a group is unloaded */
   groupUnloaded: (groupId: Uint8Array) => void;
   /** Emitted when a group is destroyed */
@@ -92,7 +100,8 @@ type MarmotClientEvents<THistory extends BaseGroupHistory | undefined = any> = {
 
 export class MarmotClient<
   THistory extends BaseGroupHistory | undefined = any,
-> extends EventEmitter<MarmotClientEvents<THistory>> {
+  TMedia extends BaseGroupMedia | undefined = any,
+> extends EventEmitter<MarmotClientEvents<THistory, TMedia>> {
   /** The signer used for the clients identity */
   readonly signer: EventSigner;
   /** The capabilities to use for the client */
@@ -115,7 +124,10 @@ export class MarmotClient<
   /** Group history interface to be passed to group instaces */
   private historyFactory: GroupHistoryFactory<THistory>;
 
-  constructor(options: MarmotClientOptions<THistory>) {
+  /** Group media interface to be passed to group instance */
+  private mediaFactory: GroupMediaFactory<TMedia>;
+
+  constructor(options: MarmotClientOptions<THistory, TMedia>) {
     super();
     this.signer = options.signer;
     this.capabilities = options.capabilities ?? defaultCapabilities();
@@ -132,6 +144,11 @@ export class MarmotClient<
     this.historyFactory = (
       "historyFactory" in options ? options.historyFactory : undefined
     ) as GroupHistoryFactory<THistory>;
+
+    // Set the media factory if its set in the options
+    this.mediaFactory = (
+      "mediaFactory" in options ? options.mediaFactory : undefined
+    ) as GroupMediaFactory<TMedia>;
   }
 
   /** Get a ciphersuite implementation from a name */
@@ -155,13 +172,16 @@ export class MarmotClient<
   }
 
   /** Internal store for loaded group classes */
-  #groups = new Map<string, MarmotGroup<THistory>>();
+  #groups = new Map<string, MarmotGroup<THistory, TMedia>>();
 
   /** Tracks in-flight group loads to prevent duplicate instances under concurrency */
-  #groupLoadPromises = new Map<string, Promise<MarmotGroup<THistory>>>();
+  #groupLoadPromises = new Map<
+    string,
+    Promise<MarmotGroup<THistory, TMedia>>
+  >();
 
   /** Sets a group instance in the cache */
-  private setGroupInstance(group: MarmotGroup<THistory>) {
+  private setGroupInstance(group: MarmotGroup<THistory, TMedia>) {
     this.#groups.set(bytesToHex(group.id), group);
     this.emit("groupsUpdated", this.groups);
   }
@@ -177,7 +197,7 @@ export class MarmotClient<
   /** Loads a new group from the store */
   private async loadGroup(
     groupId: Uint8Array | string,
-  ): Promise<MarmotGroup<THistory>> {
+  ): Promise<MarmotGroup<THistory, TMedia>> {
     const id = typeof groupId === "string" ? hexToBytes(groupId) : groupId;
     log("loading group %s from store", bytesToHex(id));
     const stateBytes = await this.groupStateStore.get(id);
@@ -188,17 +208,20 @@ export class MarmotClient<
 
     const state = this.hydrateState(stateBytes);
 
-    return await MarmotGroup.fromClientState<THistory>(state, {
+    return await MarmotGroup.fromClientState<THistory, TMedia>(state, {
       stateStore: this.groupStateStore,
       signer: this.signer,
       cryptoProvider: this.cryptoProvider,
       network: this.network,
       history: this.historyFactory,
+      media: this.mediaFactory,
     });
   }
 
   /** Gets a group from cache or loads it from store */
-  async getGroup(groupId: Uint8Array | string): Promise<MarmotGroup<THistory>> {
+  async getGroup(
+    groupId: Uint8Array | string,
+  ): Promise<MarmotGroup<THistory, TMedia>> {
     const id = typeof groupId === "string" ? groupId : bytesToHex(groupId);
     let group = this.#groups.get(id);
 
@@ -227,7 +250,7 @@ export class MarmotClient<
   }
 
   /** Loads all groups from the store and returns them */
-  async loadAllGroups(): Promise<MarmotGroup<THistory>[]> {
+  async loadAllGroups(): Promise<MarmotGroup<THistory, TMedia>[]> {
     const groupIds = await this.groupStateStore.list();
 
     return await Promise.all(groupIds.map((groupId) => this.getGroup(groupId)));
@@ -236,7 +259,7 @@ export class MarmotClient<
   /** Imports a new group from a ClientState object */
   async importGroupFromClientState(
     state: ClientState,
-  ): Promise<MarmotGroup<THistory>> {
+  ): Promise<MarmotGroup<THistory, TMedia>> {
     const id = bytesToHex(state.groupContext.groupId);
     log("importing group %s from ClientState", id);
     if (await this.groupStateStore.has(state.groupContext.groupId)) {
@@ -254,6 +277,7 @@ export class MarmotClient<
       cryptoProvider: this.cryptoProvider,
       network: this.network,
       history: this.historyFactory,
+      media: this.mediaFactory,
     });
 
     // Add group to cache
@@ -298,7 +322,7 @@ export class MarmotClient<
     options?: SimpleGroupOptions & {
       ciphersuite?: CiphersuiteName;
     },
-  ): Promise<MarmotGroup<THistory>> {
+  ): Promise<MarmotGroup<THistory, TMedia>> {
     log("creating group %o", name);
     const ciphersuiteImpl = await this.getCiphersuiteImpl(options?.ciphersuite);
 
@@ -332,6 +356,7 @@ export class MarmotClient<
       signer: this.signer,
       network: this.network,
       history: this.historyFactory,
+      media: this.mediaFactory,
     });
 
     // Save the group to the cache
@@ -402,7 +427,7 @@ export class MarmotClient<
    * @throws Error if no matching KeyPackage is found or if joining fails
    */
   async joinGroupFromWelcome(options: { welcomeRumor: Rumor }): Promise<{
-    group: MarmotGroup<THistory>;
+    group: MarmotGroup<THistory, TMedia>;
   }> {
     const { welcomeRumor } = options;
     log("joining group from welcome rumor %s", welcomeRumor.id);
@@ -456,10 +481,11 @@ export class MarmotClient<
       });
     }
 
-    if (candidatePackages.length === 0)
+    if (candidatePackages.length === 0) {
       throw new Error(
         "No matching KeyPackage found in local store. Make sure you have published a KeyPackage event.",
       );
+    }
 
     // Prioritize packages that have matching secrets in the welcome
     // This ensures we try the most likely candidates first (RFC 9420 compliance)
@@ -508,8 +534,9 @@ export class MarmotClient<
     // Mark the consumed key package as used. Callers can later list used packages
     // with (await client.keyPackages.list()).filter(p => p.used) and rotate them
     // via client.keyPackages.rotate(ref) to publish fresh ones to relays.
-    if (consumedKeyPackageRef)
+    if (consumedKeyPackageRef) {
       await this.keyPackages.markUsed(consumedKeyPackageRef);
+    }
 
     // Save the group state to the store
     const stateBytes = this.serializeState(clientState);
@@ -525,6 +552,7 @@ export class MarmotClient<
       signer: this.signer,
       network: this.network,
       history: this.historyFactory,
+      media: this.mediaFactory,
     });
 
     // Add the group to the cache
@@ -552,7 +580,7 @@ export class MarmotClient<
    * }
    * ```
    */
-  async *watchGroups(): AsyncGenerator<MarmotGroup<THistory>[]> {
+  async *watchGroups(): AsyncGenerator<MarmotGroup<THistory, TMedia>[]> {
     // Set up event listeners
     let resolveNext: (() => void) | null = null;
 

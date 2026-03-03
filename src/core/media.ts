@@ -62,24 +62,25 @@ export const MIP04_VERSION = "mip04-v2" as const;
  * parse it back. The `n` and `v` fields are passed through via the imeta
  * name-value pair format defined in NIP-92.
  */
-export type Mip04MediaAttachment = FileMetadata & {
-  /**
-   * Original filename (e.g. `"photo.jpg"`).
-   * Used in key derivation and AEAD associated data — must match exactly.
-   */
-  filename: string;
-  /**
-   * Hex-encoded 12-byte encryption nonce (24 hex characters).
-   * Stored in the `n` field of the `imeta` tag.
-   * Generated randomly by {@link encryptMediaFile} and required for decryption.
-   */
-  nonce: string;
-  /**
-   * MIP-04 encryption version. Always `"mip04-v2"` for new attachments.
-   * Stored in the `v` field of the `imeta` tag.
-   */
-  version: typeof MIP04_VERSION;
-};
+export type MediaAttachment = Omit<FileMetadata, "sha256" | "type"> &
+  Required<Pick<FileMetadata, "sha256" | "type">> & {
+    /**
+     * Original filename (e.g. `"photo.jpg"`).
+     * Used in key derivation and AEAD associated data — must match exactly.
+     */
+    filename: string;
+    /**
+     * Hex-encoded 12-byte encryption nonce (24 hex characters).
+     * Stored in the `n` field of the `imeta` tag.
+     * Generated randomly by {@link encryptMediaFile} and required for decryption.
+     */
+    nonce: string;
+    /**
+     * MIP-04 encryption version. Always `"mip04-v2"` for new attachments.
+     * Stored in the `v` field of the `imeta` tag.
+     */
+    version: typeof MIP04_VERSION;
+  };
 
 /**
  * Result of {@link encryptMediaFile}.
@@ -88,7 +89,7 @@ export type EncryptMediaFileResult = {
   /** The encrypted blob. Upload this to Blossom and use `SHA256(encrypted)` as the blob address. */
   encrypted: Uint8Array;
   /**
-   * Populated {@link Mip04MediaAttachment} ready to be passed to
+   * Populated {@link MediaAttachment} ready to be passed to
    * `createImetaTagForAttachment` (after setting the `url` field to the
    * Blossom upload URL).
    *
@@ -99,7 +100,7 @@ export type EncryptMediaFileResult = {
    * The `nonce` field contains the hex-encoded 12-byte nonce used during
    * encryption.
    */
-  attachment: Mip04MediaAttachment;
+  attachment: MediaAttachment;
 };
 
 // ---------------------------------------------------------------------------
@@ -122,11 +123,11 @@ export function canonicalizeMimeType(mimeType: string): string {
 }
 
 /**
- * Builds the ChaCha20-Poly1305 AAD for MIP-04 v2 from a {@link Mip04MediaAttachment}.
+ * Builds the ChaCha20-Poly1305 AAD for MIP-04 v2 from a {@link MediaAttachment}.
  *
  * @internal
  */
-function buildMip04Aad(attachment: Mip04MediaAttachment): Uint8Array {
+function buildMip04Aad(attachment: MediaAttachment): Uint8Array {
   const fileHashBytes = hexToBytes(attachment.sha256!);
   const canonicalMime = enc.encode(canonicalizeMimeType(attachment.type!));
   const filenameBytes = enc.encode(attachment.filename);
@@ -172,10 +173,10 @@ function buildMip04Aad(attachment: Mip04MediaAttachment): Uint8Array {
  * @param attachment - The attachment containing `sha256`, `type`, and `filename`
  * @returns 32-byte ChaCha20-Poly1305 encryption key
  */
-export async function deriveMip04FileKey(
+export async function deriveMediaEncryptionKey(
   clientState: ClientState,
   ciphersuite: CiphersuiteImpl,
-  attachment: Pick<Mip04MediaAttachment, "sha256" | "type" | "filename">,
+  attachment: Pick<MediaAttachment, "sha256" | "type" | "filename">,
 ): Promise<Uint8Array> {
   if (!attachment.sha256) throw new Error("attachment.sha256 is required");
   if (!attachment.type) throw new Error("attachment.type is required");
@@ -235,20 +236,20 @@ export async function deriveMip04FileKey(
  * ```
  *
  * @param file - The plaintext file bytes to encrypt
- * @param fileKey - 32-byte key from {@link deriveMip04FileKey}
+ * @param fileKey - 32-byte key from {@link deriveMediaEncryptionKey}
  * @param attachment - Attachment metadata; must have `sha256`, `type`, and `filename` set
- * @returns Encrypted blob and a fully populated {@link Mip04MediaAttachment}
+ * @returns Encrypted blob and a fully populated {@link MediaAttachment}
  */
 export function encryptMediaFile(
   file: Uint8Array,
   fileKey: Uint8Array,
-  attachment: Pick<Mip04MediaAttachment, "sha256" | "type" | "filename"> &
+  attachment: Pick<MediaAttachment, "sha256" | "type" | "filename"> &
     Partial<FileMetadata>,
 ): EncryptMediaFileResult {
   if (!attachment.sha256) throw new Error("attachment.sha256 is required");
   if (!attachment.type) throw new Error("attachment.type is required");
 
-  const full: Mip04MediaAttachment = {
+  const full: MediaAttachment = {
     ...attachment,
     filename: attachment.filename,
     type: canonicalizeMimeType(attachment.type),
@@ -275,10 +276,10 @@ export function encryptMediaFile(
  *
  * The `sha256`, `type`, `filename`, and `nonce` fields must all be present.
  * Parse these from the `imeta` tag using `getFileMetadataFromImetaTag` from
- * applesauce, then cast/extend to {@link Mip04MediaAttachment}.
+ * applesauce, then cast/extend to {@link MediaAttachment}.
  *
  * @param encrypted - The encrypted blob downloaded from Blossom
- * @param fileKey - 32-byte key from {@link deriveMip04FileKey}
+ * @param fileKey - 32-byte key from {@link deriveMediaEncryptionKey}
  * @param attachment - The MIP-04 attachment from the group message's `imeta` tag
  * @returns The decrypted file bytes
  * @throws If AEAD authentication fails, required fields are missing, or the
@@ -287,7 +288,7 @@ export function encryptMediaFile(
 export function decryptMediaFile(
   encrypted: Uint8Array,
   fileKey: Uint8Array,
-  attachment: Mip04MediaAttachment,
+  attachment: MediaAttachment,
 ): Uint8Array {
   if (!attachment.sha256) throw new Error("attachment.sha256 is required");
   if (!attachment.type) throw new Error("attachment.type is required");
@@ -312,14 +313,6 @@ export function decryptMediaFile(
 
   return decrypted;
 }
-
-// ---------------------------------------------------------------------------
-// Parsing helpers
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Validation guards
-// ---------------------------------------------------------------------------
 
 /**
  * Returns `true` iff `value` is a non-empty MIME type string of the form
@@ -359,7 +352,7 @@ function parseRawImetaEntries(tag: string[]): Map<string, string> {
 }
 
 /**
- * Parses an `imeta` tag array into a {@link Mip04MediaAttachment}.
+ * Parses an `imeta` tag array into a {@link MediaAttachment}.
  *
  * The MIP-04-specific fields (`filename`, `n`, `v`) are read directly from
  * the raw tag entries because applesauce's {@link getFileMetadataFromImetaTag}
@@ -378,10 +371,10 @@ function parseRawImetaEntries(tag: string[]): Map<string, string> {
  * Per the MIP-04 spec, clients MUST reject deprecated `mip04-v1` tags.
  *
  * @param tag - A raw `imeta` tag array from a Nostr event (e.g. `rumor.tags`)
- * @returns A fully-typed {@link Mip04MediaAttachment}, or `null` if the tag is
+ * @returns A fully-typed {@link MediaAttachment}, or `null` if the tag is
  *   not a valid MIP-04 v2 attachment
  */
-export function parseMip04ImetaTag(tag: string[]): Mip04MediaAttachment | null {
+export function parseMediaImetaTag(tag: string[]): MediaAttachment | null {
   if (tag[0] !== "imeta") return null;
 
   // Parse raw entries to read MIP-04 fields that applesauce strips.
@@ -390,23 +383,24 @@ export function parseMip04ImetaTag(tag: string[]): Mip04MediaAttachment | null {
   const version = raw.get("v");
   const nonce = raw.get("n");
   const filename = raw.get("filename");
-  const sha256 = raw.get("x");
-  const mimeType = raw.get("m");
 
   if (version !== MIP04_VERSION) return null;
   // n encodes a 12-byte nonce as hex → must be exactly 24 characters
   if (!nonce || nonce.length !== 24) return null;
   if (!filename || filename.length === 0) return null;
-  // x encodes a 32-byte SHA-256 as hex → must be exactly 64 characters
-  if (!sha256 || sha256.length !== 64) return null;
-  // m must be a valid MIME type
-  if (!mimeType || !isValidMimeType(mimeType)) return null;
 
   // Delegate standard NIP-92 field parsing to applesauce.
   const base = getFileMetadataFromImetaTag(tag);
 
+  // x encodes a 32-byte SHA-256 as hex → must be exactly 64 characters
+  if (!base.sha256 || base.sha256.length !== 64) return null;
+  // m must be a valid MIME type
+  if (!base.type || !isValidMimeType(base.type)) return null;
+
   return {
     ...base,
+    sha256: base.sha256,
+    type: base.type,
     filename,
     nonce,
     version: MIP04_VERSION,
@@ -420,13 +414,13 @@ export function parseMip04ImetaTag(tag: string[]): Mip04MediaAttachment | null {
  * absent `v` field, missing `n`/`filename`) are silently skipped.
  *
  * @param tags - The `tags` array from a Nostr event or rumor
- * @returns Array of valid {@link Mip04MediaAttachment} objects (may be empty)
+ * @returns Array of valid {@link MediaAttachment} objects (may be empty)
  */
-export function getMip04Attachments(tags: string[][]): Mip04MediaAttachment[] {
+export function getMediaAttachments(tags: string[][]): MediaAttachment[] {
   return tags
     .filter((t) => t[0] === "imeta")
-    .map(parseMip04ImetaTag)
-    .filter((a): a is Mip04MediaAttachment => a !== null);
+    .map(parseMediaImetaTag)
+    .filter((a): a is MediaAttachment => a !== null);
 }
 
 /**
@@ -445,12 +439,12 @@ export function getMip04Attachments(tags: string[][]): Mip04MediaAttachment[] {
  * - The `m` (MIME type) tag is absent or is not a valid `type/subtype` string
  *
  * @param event - A kind 1063 Nostr event
- * @returns A fully-typed {@link Mip04MediaAttachment}, or `null` if the event
+ * @returns A fully-typed {@link MediaAttachment}, or `null` if the event
  *   does not carry a valid MIP-04 v2 attachment
  */
-export function getMip04AttachmentFromFileMetadataEvent(
+export function getMediaAttachmentFromFileEvent(
   event: NostrEvent,
-): Mip04MediaAttachment | null {
+): MediaAttachment | null {
   /** Helper: return the value of the first tag with the given name, or undefined. */
   const getTag = (name: string): string | undefined =>
     event.tags.find((t) => t[0] === name)?.[1];
@@ -458,23 +452,24 @@ export function getMip04AttachmentFromFileMetadataEvent(
   const version = getTag("v");
   const nonce = getTag("n");
   const filename = getTag("filename");
-  const sha256 = getTag("x");
-  const mimeType = getTag("m");
 
   if (version !== MIP04_VERSION) return null;
   // n encodes a 12-byte nonce as hex → must be exactly 24 characters
   if (!nonce || nonce.length !== 24) return null;
   if (!filename || filename.length === 0) return null;
-  // x encodes a 32-byte SHA-256 as hex → must be exactly 64 characters
-  if (!sha256 || sha256.length !== 64) return null;
-  // m must be a valid MIME type
-  if (!mimeType || !isValidMimeType(mimeType)) return null;
 
   // Delegate standard NIP-94 tag parsing to applesauce.
   const base = getFileMetadata(event);
 
+  // x encodes a 32-byte SHA-256 as hex → must be exactly 64 characters
+  if (!base.sha256 || base.sha256.length !== 64) return null;
+  // m must be a valid MIME type
+  if (!base.type || !isValidMimeType(base.type)) return null;
+
   return {
     ...base,
+    sha256: base.sha256,
+    type: base.type,
     filename,
     nonce,
     version: MIP04_VERSION,
