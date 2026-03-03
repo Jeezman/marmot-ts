@@ -1,9 +1,12 @@
 import type { Rumor } from "applesauce-common/helpers/gift-wrap";
 import type { EventSigner } from "applesauce-core/event-factory";
-import { bytesToHex, type NostrEvent } from "applesauce-core/helpers/event";
+import {
+  bytesToHex,
+  getEventHash,
+  type NostrEvent,
+} from "applesauce-core/helpers/event";
 import { Debugger } from "debug";
 import { EventEmitter } from "eventemitter3";
-import { getEventHash } from "nostr-tools";
 import {
   CiphersuiteImpl,
   ClientState,
@@ -35,8 +38,8 @@ import {
 import { getCredentialPubkey } from "../../core/credential.js";
 import {
   createGroupEvent,
-  GroupMessagePair,
   decryptGroupMessages,
+  GroupMessagePair,
   serializeApplicationRumor,
   sortGroupCommits,
 } from "../../core/group-message.js";
@@ -85,8 +88,9 @@ export type SkippedIngestResult = {
    * Why the event was skipped:
    * - `"past-epoch"` – commit belongs to an epoch we have already advanced past
    * - `"wrong-wireformat"` – the MLS wireformat is unexpected for a group message
+   * - `"self-echo"` – this event was sent by us; state was already advanced at send time
    */
-  reason: "past-epoch" | "wrong-wireformat";
+  reason: "past-epoch" | "wrong-wireformat" | "self-echo";
 };
 
 /** An event that could not be decrypted or processed after all retry attempts */
@@ -251,6 +255,12 @@ export class MarmotGroup<
   /** Internal ClientState */
   #state: ClientState;
   #groupData: MarmotGroupData | null = null;
+
+  /**
+   * Event IDs of application messages we sent ourselves, used to skip self-echoes in ingest()
+   * NOTE: this is not persisted at the moment, its only in memory and used to skip self-echoes in ingest()
+   */
+  readonly #sentEventIds = new Set<string>();
 
   get id() {
     return this.state.groupContext.groupId;
@@ -520,6 +530,11 @@ export class MarmotGroup<
       ciphersuite: this.ciphersuite,
     });
 
+    // Track this event ID so ingest() can skip the self-echo without re-running
+    // processMessage against an already-advanced ratchet (which would throw
+    // "desired gen in the past").
+    this.#sentEventIds.add(applicationEvent.id);
+
     // Publish to the group's relays
     const relays = this.relays;
     if (!relays) throw new NoGroupRelaysError();
@@ -530,8 +545,20 @@ export class MarmotGroup<
         .map((r) => r.message)
         .join("; ");
       throw new Error(
-        `Failed to publish application message: ${errors || "no relay acknowledged"}`,
+        `Failed to publish application message: ${
+          errors || "no relay acknowledged"
+        }`,
       );
+    }
+
+    // Save to history immediately so the sender sees their own message without
+    // waiting for the relay echo to arrive and be ingested.
+    if (this.history) {
+      try {
+        await this.history.saveMessage(applicationData);
+      } catch (err) {
+        this.emit("historyError", err as Error);
+      }
     }
 
     // Update the group state after successful publish
@@ -759,7 +786,12 @@ export class MarmotGroup<
 
           if (inboxRelays.length === 0) {
             throw new Error(
-              `No relays available to send Welcome to recipient ${recipient.pubkey.slice(0, 16)}...`,
+              `No relays available to send Welcome to recipient ${
+                recipient.pubkey.slice(
+                  0,
+                  16,
+                )
+              }...`,
             );
           }
 
@@ -790,10 +822,9 @@ export class MarmotGroup<
           } => x.result.status === "rejected",
         )
         .map((x) => {
-          const msg =
-            x.result.reason instanceof Error
-              ? x.result.reason.message
-              : String(x.result.reason);
+          const msg = x.result.reason instanceof Error
+            ? x.result.reason.message
+            : String(x.result.reason);
           return `${x.recipient.pubkey.slice(0, 16)}…: ${msg}`;
         });
 
@@ -805,7 +836,11 @@ export class MarmotGroup<
           failureDetails,
         );
         throw new Error(
-          `Failed to deliver ${failureDetails.length}/${options.welcomeRecipients.length} Welcome message(s): ${failureDetails.join("; ")}`,
+          `Failed to deliver ${failureDetails.length}/${options.welcomeRecipients.length} Welcome message(s): ${
+            failureDetails.join(
+              "; ",
+            )
+          }`,
         );
       }
     }
@@ -1055,6 +1090,18 @@ export class MarmotGroup<
 
     for (const { event, message } of nonCommits) {
       try {
+        // Skip application messages that we sent ourselves.  When we sent the
+        // message we already advanced this.state via the newState returned by
+        // createApplicationMessage.  If we ran processMessage again against that
+        // advanced ratchet the generation counter would be in the past and
+        // ts-mls would throw "desired gen in the past".  History was already
+        // saved at send time, so nothing is lost by skipping here.
+        if (this.#sentEventIds.delete(event.id)) {
+          log("skip event:%s reason:self-echo", event.id.slice(0, 8));
+          yield { kind: "skipped", event, message, reason: "self-echo" };
+          continue;
+        }
+
         // Yield unexpected wireformats as skipped rather than silently ignoring them.
         if (
           message.wireformat !== wireformats.mls_private_message &&
@@ -1145,10 +1192,9 @@ export class MarmotGroup<
         continue;
       }
 
-      const commitEpoch =
-        typeof message.privateMessage.epoch === "bigint"
-          ? message.privateMessage.epoch
-          : BigInt(message.privateMessage.epoch);
+      const commitEpoch = typeof message.privateMessage.epoch === "bigint"
+        ? message.privateMessage.epoch
+        : BigInt(message.privateMessage.epoch);
       const currentEpoch = this.state.groupContext.epoch;
 
       // Commits from past epochs were already applied — skip and report them.
