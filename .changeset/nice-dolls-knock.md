@@ -1,5 +1,5 @@
 ---
-"@internet-privacy/marmots": patch
+"@internet-privacy/marmot-ts": patch
 ---
 
 Remove "nostr-tools" direct dependency

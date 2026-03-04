@@ -15,9 +15,9 @@ Depending on what you're looking to build or understand, we recommend the follow
 ## Installation
 
 ```bash
-npm install @internet-privacy/marmots applesauce-core
+npm install @internet-privacy/marmot-ts applesauce-core
 # or
-pnpm add @internet-privacy/marmots applesauce-core
+pnpm add @internet-privacy/marmot-ts applesauce-core
 ```
 
 _Note: `marmot-ts` relies heavily on [ts-mls](https://github.com/LukaJCB/ts-mls) under the hood. You do not need to install it separately, but you will often see types propagated from it._
@@ -37,7 +37,7 @@ import localforage from "localforage";
 import {
   KeyValueGroupStateBackend,
   KeyPackageStore,
-} from "@internet-privacy/marmots";
+} from "@internet-privacy/marmot-ts";
 
 // Store encrypted group bytes
 const groupStateBackend = new KeyValueGroupStateBackend(
@@ -55,7 +55,7 @@ const keyPackageStore = new KeyPackageStore(
 The client needs a way to fetch and broadcast standard Nostr events. You must implement the `NostrNetworkInterface`. Here is a minimal structure wrapping standard logic:
 
 ```typescript
-import type { NostrNetworkInterface } from "@internet-privacy/marmots";
+import type { NostrNetworkInterface } from "@internet-privacy/marmot-ts";
 
 const network: NostrNetworkInterface = {
   request: async (relays, filters) => {
@@ -97,7 +97,7 @@ const network: NostrNetworkInterface = {
 Finally, bring your dependencies together alongside an `EventSigner` (from `applesauce-core`).
 
 ```typescript
-import { MarmotClient } from "@internet-privacy/marmots";
+import { MarmotClient } from "@internet-privacy/marmot-ts";
 
 const client = new MarmotClient({
   signer: yourApplesauceSigner,

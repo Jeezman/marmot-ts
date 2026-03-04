@@ -19,9 +19,9 @@ This library provides the building blocks for creating secure, decentralized gro
 ## Installation
 
 ```bash
-npm install @internet-privacy/marmots
+npm install @internet-privacy/marmot-ts
 # or
-pnpm add @internet-privacy/marmots
+pnpm add @internet-privacy/marmot-ts
 ```
 
 ## Marmot Protocol Compliance
@@ -51,7 +51,7 @@ Comprehensive documentation is available in the `documentation/` directory:
 To begin using the client, you need an established `EventSigner` interface and proper storage backends:
 
 ```typescript
-import { MarmotClient, KeyValueGroupStateBackend, KeyPackageStore } from "@internet-privacy/marmots";
+import { MarmotClient, KeyValueGroupStateBackend, KeyPackageStore } from "@internet-privacy/marmot-ts";
 
 // Setup backends via your choice of db (e.g. LocalForage)
 const groupStateBackend = new KeyValueGroupStateBackend(/* ... */);

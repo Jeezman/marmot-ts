@@ -99,7 +99,7 @@ await group.sendApplicationRumor(rumor);
 To receive messages, you subscribe to Kind `445` events on the group's specific relays, and feed the stream into the `group.ingest()` method.
 
 ```typescript
-import { deserializeApplicationRumor } from "@internet-privacy/marmots";
+import { deserializeApplicationRumor } from "@internet-privacy/marmot-ts";
 
 // 1. Subscribe to the group's network relay(s)
 const subscription = client.network.subscription(group.groupInfo.relays, [

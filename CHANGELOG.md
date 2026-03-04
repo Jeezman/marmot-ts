@@ -1,4 +1,4 @@
-# @internet-privacy/marmots
+# @internet-privacy/marmot-ts
 
 ## 0.2.0
 
