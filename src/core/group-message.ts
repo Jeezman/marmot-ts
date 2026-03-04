@@ -1,7 +1,6 @@
 import { Rumor } from "applesauce-common/helpers/gift-wrap";
-import { chacha20poly1305 } from "@noble/ciphers/chacha.js";
-import { concatBytes, randomBytes } from "@noble/hashes/utils.js";
-import { finalizeEvent, generateSecretKey, NostrEvent } from "nostr-tools";
+import { finalizeEvent, NostrEvent } from "applesauce-core/helpers/event";
+import { generateSecretKey } from "applesauce-core/helpers/keys";
 import { ClientState } from "ts-mls/clientState.js";
 import { CiphersuiteImpl } from "ts-mls/crypto/ciphersuite.js";
 import { mlsExporter } from "ts-mls/keySchedule.js";
@@ -17,6 +16,8 @@ import { decryptLegacyGroupMessageEventContent } from "./group-message-legacy.js
 import { getNostrGroupIdHex } from "./client-state.js";
 import { isPrivateMessage } from "./message.js";
 import { GROUP_EVENT_KIND } from "./protocol.js";
+import { chacha20poly1305 } from "@noble/ciphers/chacha.js";
+import { concatBytes, randomBytes } from "@noble/ciphers/utils.js";
 
 /**
  * Derives the MIP-03 group-event encryption key for a group epoch.
