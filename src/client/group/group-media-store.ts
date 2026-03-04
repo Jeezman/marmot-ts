@@ -1,7 +1,5 @@
 import { EventEmitter } from "eventemitter3";
 import { InMemoryKeyValueStore } from "../../extra/in-memory-key-value-store.js";
-import { EventEmitter } from "eventemitter3";
-import { InMemoryKeyValueStore } from "../../extra/in-memory-key-value-store.js";
 import type { KeyValueStoreBackend } from "../../utils/key-value.js";
 import type { MediaAttachment } from "../../core/media.js";
 import type { BaseGroupMedia, StoredMedia } from "./marmot-group.js";
@@ -45,10 +43,11 @@ export class GroupMediaStore
   }
 
   /**
-   * Adds or updates a decrypted blob in the cache.
+   * Adds a decrypted blob to the cache if it is not already present.
    *
-   * Emits `blobAdded` for new entries or `blobUpdated` when an existing entry
-   * is replaced. The key is the hex-encoded SHA-256 of the plaintext.
+   * Emits `mediaAdded` when a new entry is stored. If an entry for the given
+   * key already exists the call is a no-op and no event is emitted.
+   * The key is the hex-encoded SHA-256 of the plaintext.
    *
    * @param sha256Hex - Hex-encoded SHA-256 of the plaintext blob
    * @param entry - The plaintext data and its MIP-04 attachment metadata
@@ -82,7 +81,7 @@ export class GroupMediaStore
 
   /**
    * Removes the cached entry for the given key.
-   * Emits `blobRemoved` if an entry existed.
+   * Emits `mediaRemoved` if an entry existed.
    *
    * @param sha256 - Hex-encoded SHA-256 of the plaintext blob
    */
