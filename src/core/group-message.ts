@@ -1,14 +1,14 @@
 import { Rumor } from "applesauce-common/helpers/gift-wrap";
 import { finalizeEvent, NostrEvent } from "applesauce-core/helpers/event";
 import { generateSecretKey } from "applesauce-core/helpers/keys";
+import { contentTypes, decode, encode, wireformats } from "ts-mls";
 import { ClientState } from "ts-mls/clientState.js";
 import { CiphersuiteImpl } from "ts-mls/crypto/ciphersuite.js";
 import { mlsExporter } from "ts-mls/keySchedule.js";
-import { contentTypes, decode, encode, wireformats } from "ts-mls";
 import {
+  type MlsMessage,
   mlsMessageDecoder,
   mlsMessageEncoder,
-  type MlsMessage,
 } from "ts-mls/message.js";
 import { decodeContent, encodeContent } from "../utils/encoding.js";
 import { unixNow } from "../utils/nostr.js";

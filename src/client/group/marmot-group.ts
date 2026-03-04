@@ -31,6 +31,7 @@ import {
 import { getCredentialFromLeafIndex } from "ts-mls/ratchetTree.js";
 import { type LeafIndex, toLeafIndex } from "ts-mls/treemath.js";
 
+import { sha256 } from "@noble/hashes/sha2.js";
 import { marmotAuthService } from "../../core/auth-service.js";
 import {
   getMarmotGroupData,
@@ -45,6 +46,14 @@ import {
   sortGroupCommits,
 } from "../../core/group-message.js";
 import { getKeyPackage } from "../../core/key-package-event.js";
+import {
+  canonicalizeMimeType,
+  decryptMediaFile,
+  deriveMediaEncryptionKey,
+  encryptMediaFile,
+  MIP04_VERSION,
+  type MediaAttachment,
+} from "../../core/media.js";
 import { isPrivateMessage } from "../../core/message.js";
 import { MarmotGroupData } from "../../core/protocol.js";
 import { createWelcomeRumor } from "../../core/welcome.js";
@@ -121,10 +130,37 @@ export interface BaseGroupHistory {
   purgeMessages(): Promise<void>;
 }
 
+/** Shape of the stored media in a {@link BaseGroupMedia} implementation */
+export type StoredMedia = {
+  /** Plaintext (decrypted) file bytes. */
+  data: Uint8Array;
+  /** The full MIP-04 attachment metadata associated with this blob. */
+  attachment: MediaAttachment;
+};
+
 /** A factory function that creates a {@link BaseGroupHistory} instance for a group id */
 export type GroupHistoryFactory<
   THistory extends BaseGroupHistory | undefined = undefined,
 > = (groupId: Uint8Array) => THistory;
+
+/** The minimal implementation of a group media store */
+export interface BaseGroupMedia {
+  /** Adds a new media entry to the group media store */
+  addMedia(sha256: string, entry: StoredMedia): Promise<void>;
+  /** Retrieves a media entry from the group media store */
+  getMedia(sha256: string): Promise<StoredMedia | null>;
+  /** Removes a media entry from the group media store */
+  removeMedia(sha256: string): Promise<void>;
+  /** Lists all media entries in the group media store */
+  listMedia(): Promise<MediaAttachment[]>;
+  /** Clears all media entries from the group media store */
+  clearMedia(): Promise<void>;
+}
+
+/** A factory function that creates a {@link BaseGroupHistory} instance for a group id */
+export type GroupMediaFactory<
+  TMedia extends BaseGroupMedia | undefined = undefined,
+> = (groupId: Uint8Array) => TMedia;
 
 export type ProposalContext = {
   state: ClientState;
@@ -145,6 +181,7 @@ export type ProposalBuilder<
 
 export type MarmotGroupOptions<
   THistory extends BaseGroupHistory | undefined = undefined,
+  TMedia extends BaseGroupMedia | undefined = undefined,
 > = {
   /** The state store to store and load group state from */
   stateStore: GroupStateStore;
@@ -156,6 +193,12 @@ export type MarmotGroupOptions<
   network: NostrNetworkInterface;
   /** The storage interface for the groups application message history (optional) */
   history?: THistory | GroupHistoryFactory<THistory>;
+  /**
+   * Backend (or pre-wrapped store) for the plaintext blob cache used by
+   * {@link MarmotGroup.decryptMedia}. Defaults to an in-memory cache when
+   * not provided.
+   */
+  media?: TMedia | GroupMediaFactory<TMedia>;
 };
 
 /** Information about a welcome recipient */
@@ -227,15 +270,18 @@ export function createAdminCommitPolicyCallback(args: {
 }
 
 /** Map of events that can be emitted by a MarmotGroup */
-type MarmotGroupEvents<THistory extends BaseGroupHistory | undefined = any> = {
+type MarmotGroupEvents<
+  THistory extends BaseGroupHistory | undefined = any,
+  TMedia extends BaseGroupMedia | undefined = any,
+> = {
   /** Emitted when the group state is updated */
   stateChanged: (state: ClientState) => void;
   /** Emitted when a new application message is received */
   applicationMessage: (message: Uint8Array) => void;
   /** Emitted when the group state is saved */
-  stateSaved: (group: MarmotGroup<THistory>) => void;
+  stateSaved: (group: MarmotGroup<THistory, TMedia>) => void;
   /** Emitted when the group is destroyed */
-  destroyed: (group: MarmotGroup<THistory>) => void;
+  destroyed: (group: MarmotGroup<THistory, TMedia>) => void;
   /** Emitted when history persistence fails (best-effort, non-blocking) */
   historyError: (error: Error) => void;
 };
@@ -246,7 +292,8 @@ type MarmotGroupEvents<THistory extends BaseGroupHistory | undefined = any> = {
  */
 export class MarmotGroup<
   THistory extends BaseGroupHistory | undefined = undefined,
-> extends EventEmitter<MarmotGroupEvents<THistory>> {
+  TMedia extends BaseGroupMedia | undefined = undefined,
+> extends EventEmitter<MarmotGroupEvents<THistory, TMedia>> {
   /** The state store to store and load group state from */
   readonly stateStore: GroupStateStore;
 
@@ -261,6 +308,9 @@ export class MarmotGroup<
 
   /** The storage interface for the groups application message history */
   readonly history: THistory;
+
+  /** The storage interface for the groups media */
+  readonly media: TMedia;
 
   /** Whether group state has been modified */
   dirty = false;
@@ -316,7 +366,10 @@ export class MarmotGroup<
 
   private log: Debugger;
 
-  constructor(state: ClientState, options: MarmotGroupOptions<THistory>) {
+  constructor(
+    state: ClientState,
+    options: MarmotGroupOptions<THistory, TMedia>,
+  ) {
     super();
     this.#state = state;
     this.stateStore = options.stateStore;
@@ -335,6 +388,16 @@ export class MarmotGroup<
       this.history = undefined as THistory;
     }
 
+    if (options.media) {
+      if (typeof options.media === "function") {
+        this.media = options.media(this.id);
+      } else {
+        this.media = options.media;
+      }
+    } else {
+      this.media = undefined as TMedia;
+    }
+
     // Set useful fields
     this.idStr = bytesToHex(this.id);
 
@@ -344,12 +407,13 @@ export class MarmotGroup<
   /** Creates a new {@link MarmotGroup} instance from a {@link ClientState} object */
   static async fromClientState<
     THistory extends BaseGroupHistory | undefined = undefined,
+    TMedia extends BaseGroupMedia | undefined = undefined,
   >(
     state: ClientState,
-    options: Omit<MarmotGroupOptions<THistory>, "ciphersuite"> & {
+    options: Omit<MarmotGroupOptions<THistory, TMedia>, "ciphersuite"> & {
       cryptoProvider?: CryptoProvider;
     },
-  ): Promise<MarmotGroup<THistory>> {
+  ): Promise<MarmotGroup<THistory, TMedia>> {
     // Get the group's ciphersuite implementation
     // In v2, getCiphersuiteImpl is available on the cryptoProvider and takes a CiphersuiteName directly
     const cryptoProvider = options.cryptoProvider ?? defaultCryptoProvider;
@@ -548,6 +612,20 @@ export class MarmotGroup<
     // "desired gen in the past").
     this.#sentEventIds.add(applicationEvent.id);
 
+    // Save to history immediately so the sender sees their own message without
+    // waiting for the relay echo to arrive and be ingested.
+    if (this.history) {
+      try {
+        await this.history.saveMessage(applicationData);
+      } catch (err) {
+        this.emit("historyError", err as Error);
+      }
+    }
+
+    // Update the group state after successful publish
+    // Application messages update state for forward secrecy (key schedule rotation)
+    this.state = newState;
+
     // Publish to the group's relays
     const relays = this.relays;
     if (!relays) throw new NoGroupRelaysError();
@@ -563,20 +641,6 @@ export class MarmotGroup<
         }`,
       );
     }
-
-    // Save to history immediately so the sender sees their own message without
-    // waiting for the relay echo to arrive and be ingested.
-    if (this.history) {
-      try {
-        await this.history.saveMessage(applicationData);
-      } catch (err) {
-        this.emit("historyError", err as Error);
-      }
-    }
-
-    // Update the group state after successful publish
-    // Application messages update state for forward secrecy (key schedule rotation)
-    this.state = newState;
 
     return response;
   }
@@ -1326,12 +1390,114 @@ export class MarmotGroup<
     }
   }
 
+  /**
+   * Encrypts a media file for sharing in a group message (MIP-04 v2).
+   *
+   * Derives the per-file key from the current MLS epoch, encrypts with
+   * ChaCha20-Poly1305, and returns the ciphertext alongside a fully
+   * populated {@link MediaAttachment} ready to be serialised into an
+   * `imeta` tag via `createImetaTagForAttachment` from applesauce.
+   *
+   * **Caller responsibilities:**
+   * 1. Upload `encrypted` to Blossom (or any content-addressed store).
+   * 2. Set `attachment.url` to the resulting upload URL.
+   * 3. Pass `attachment` (with `url`) to `createImetaTagForAttachment` and
+   *    include the resulting tag on the group message rumor.
+   */
+  async encryptMedia(
+    blob: Blob,
+    metadata: {
+      filename: string;
+      type?: string;
+      dimensions?: string;
+      blurhash?: string;
+      alt?: string;
+      size?: number;
+    },
+  ): Promise<{ encrypted: Uint8Array; attachment: MediaAttachment }> {
+    const mimeType = metadata.type ?? blob.type;
+    if (!mimeType) {
+      throw new Error(
+        "encryptMedia: MIME type is required — pass metadata.type or ensure blob.type is set",
+      );
+    }
+
+    const plaintext = new Uint8Array(await blob.arrayBuffer());
+    const plaintextHash = bytesToHex(sha256(plaintext));
+
+    const skeleton: MediaAttachment = {
+      sha256: plaintextHash,
+      type: canonicalizeMimeType(mimeType),
+      filename: metadata.filename,
+      nonce: "", // filled by encryptMediaFile
+      version: MIP04_VERSION,
+      size: metadata.size ?? blob.size,
+      ...(metadata.dimensions !== undefined
+        ? { dimensions: metadata.dimensions }
+        : {}),
+      ...(metadata.blurhash !== undefined
+        ? { blurhash: metadata.blurhash }
+        : {}),
+      ...(metadata.alt !== undefined ? { alt: metadata.alt } : {}),
+    };
+
+    const fileKey = await deriveMediaEncryptionKey(
+      this.state,
+      this.ciphersuite,
+      skeleton,
+    );
+
+    return encryptMediaFile(plaintext, fileKey, skeleton);
+  }
+
+  /**
+   * Decrypts a MIP-04 v2 media attachment downloaded from Blossom.
+   *
+   * On the first call for a given file the plaintext bytes are derived via
+   * key-derivation + ChaCha20-Poly1305 decryption and stored in
+   * {`@link` media}. Subsequent calls for the same `attachment.sha256`
+   * are served directly from the cache, skipping key-derivation entirely.
+   */
+  async decryptMedia(
+    encrypted: Uint8Array,
+    attachment: MediaAttachment,
+  ): Promise<StoredMedia> {
+    if (!attachment.sha256) {
+      throw new Error("decryptMedia: attachment.sha256 is required");
+    }
+
+    // Cache hit — return immediately without re-deriving the key
+    const cached = await this.media?.getMedia(attachment.sha256);
+    if (cached) return cached;
+
+    // Cache miss — derive key and decrypt
+    const fileKey = await deriveMediaEncryptionKey(
+      this.state,
+      this.ciphersuite,
+      attachment,
+    );
+    const plaintext = decryptMediaFile(encrypted, fileKey, attachment);
+
+    // Populate cache for future calls
+    await this.media?.addMedia(attachment.sha256, {
+      data: plaintext,
+      attachment,
+    });
+
+    return { data: plaintext, attachment };
+  }
+
   /** Destroys the group and purges the group history */
   async destroy() {
     this.log("destroying group");
+
+    this.log("clearing group history");
     if (this.history) await this.history.purgeMessages();
 
-    // Remove the group from the store
+    this.log("clearing group media");
+    if (this.media) await this.media.clearMedia();
+
+    this.log("removing group from store");
     await this.stateStore.remove(this.id);
 
     // Emit the destroyed event

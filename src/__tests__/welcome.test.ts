@@ -1,8 +1,7 @@
-import { describe, expect, it } from "vitest";
-
 import type { NostrEvent } from "applesauce-core/helpers/event";
-import { getWelcome } from "../core/welcome";
+import { describe, expect, it } from "vitest";
 import { WELCOME_EVENT_KIND } from "../core/protocol";
+import { getWelcome } from "../core/welcome";
 
 describe("spec compliance (MIP-02)", () => {
   it("should reject decoding kind 444 events that are missing an encoding=base64 tag", () => {

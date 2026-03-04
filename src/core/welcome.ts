@@ -7,8 +7,8 @@ import {
 import {
   decode,
   encode,
-  protocolVersions,
   type GroupInfo,
+  protocolVersions,
   wireformats,
 } from "ts-mls";
 import { CiphersuiteImpl } from "ts-mls/crypto/ciphersuite.js";
