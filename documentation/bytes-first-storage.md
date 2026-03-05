@@ -34,7 +34,7 @@ export interface GroupStateStoreBackend {
 If you are using a key-value store (like `localStorage` or `localforage`), `marmot-ts` provides the `KeyValueGroupStateBackend` adapter. This adapter automatically handles converting the `Uint8Array` Group IDs to hex strings so they can be used as keys in a standard key-value map.
 
 ```typescript
-import { KeyValueGroupStateBackend } from "@internet-privacy/marmots";
+import { KeyValueGroupStateBackend } from "@internet-privacy/marmot-ts";
 
 // Example mapping to a generic key-value store interface
 const myBackend = new KeyValueGroupStateBackend({

@@ -1,5 +1,5 @@
 {
-  "name": "@internet-privacy/marmots",
+  "name": "@internet-privacy/marmot-ts",
   "version": "0.2.0",
   "type": "module",
   "description": "Marmot protocol implementation in TypeScript",

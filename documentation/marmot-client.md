@@ -7,7 +7,7 @@ The `MarmotClient` acts as the root factory and supervisor for all MLS operation
 You instantiate the client by passing an `options` object. The options include the dependencies required to link Nostr signatures and persistence together:
 
 ```typescript
-import { MarmotClient } from "@internet-privacy/marmots";
+import { MarmotClient } from "@internet-privacy/marmot-ts";
 
 const client = new MarmotClient({
   signer: myApplesauceSigner,
@@ -46,7 +46,7 @@ import {
   createCredential,
   generateKeyPackage,
   createKeyPackageEvent,
-} from "@internet-privacy/marmots";
+} from "@internet-privacy/marmot-ts";
 import { defaultCryptoProvider } from "ts-mls";
 
 // 1. Get the requested ciphersuite implementation

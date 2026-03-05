@@ -68,7 +68,7 @@ importers:
 
   examples:
     dependencies:
-      "@internet-privacy/marmots":
+      "@internet-privacy/marmot-ts":
         specifier: workspace:*
         version: link:..
       "@noble/hashes":
