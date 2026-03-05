@@ -1,5 +1,18 @@
 # @internet-privacy/marmot-ts
 
+## 0.3.0
+
+### Minor Changes
+
+- 74f4d9e: Add MIP-01 group image and MIP-04 chat media encryption helpers
+- b58eaac: Update kind 445 group message encryption to the new MIP-03 format and keep legacy decryption fallback with a deprecation warning
+- 5454332: Add parseMediaImetaTag, getMediaAttachments, and getMediaAttachmentFromFileEvent helpers for parsing MIP-04 v2 attachments from imeta tags and kind 1063 events
+
+### Patch Changes
+
+- f668978: Fix MIP-04 key derivation to use MLS-Exporter("marmot", "encrypted-media", 32) per updated spec
+- 5b70f08: Remove "nostr-tools" direct dependency
+
 ## 0.2.0
 
 ### Minor Changes
