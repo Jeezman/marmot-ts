@@ -123,11 +123,8 @@ export class GroupRumorHistory
     this.on("cleared", notifyCleared);
 
     try {
-      const timeline = (await this.backend.queryRumors(
-        filtersArray,
-      )) as NostrEvent[];
-
-      yield timeline;
+      current = (await this.backend.queryRumors(filtersArray)) as NostrEvent[];
+      yield current;
 
       while (true) {
         yield await new Promise<NostrEvent[]>((r) => (next = r));
