@@ -4,6 +4,10 @@ import type { Filter } from "applesauce-core/helpers/filter";
 import { EventEmitter } from "eventemitter3";
 import { deserializeApplicationData } from "../../core/group-message.js";
 import { BaseGroupHistory, GroupHistoryFactory } from "../index.js";
+import {
+  insertEventIntoDescendingList,
+  NostrEvent,
+} from "applesauce-core/helpers";
 
 /** A rumor storage interface for the {@link GroupRumorHistory} class */
 export interface GroupRumorHistoryBackend {
@@ -87,8 +91,8 @@ export class GroupRumorHistory
         : [filters]
       : [{}];
 
-    let pending = false;
-    let nextResolve: (() => void) | null = null;
+    let current: NostrEvent[] = [];
+    let next: ((timeline: NostrEvent[]) => void) | null = null;
 
     const notify = (rumor: Rumor) => {
       // Only wake up if the new rumor matches at least one of the caller's filters.
@@ -97,20 +101,21 @@ export class GroupRumorHistory
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       if (!matchFilters(filtersArray, rumor as any)) return;
 
-      if (nextResolve) {
-        nextResolve();
-        nextResolve = null;
-      } else {
-        pending = true;
+      if (next) {
+        // Add event to timeline
+        insertEventIntoDescendingList(current, rumor as NostrEvent);
+
+        // Resolve next promise
+        next([...current]);
+        next = null;
       }
     };
 
     const notifyCleared = () => {
-      if (nextResolve) {
-        nextResolve();
-        nextResolve = null;
-      } else {
-        pending = true;
+      if (next) {
+        // Resolve next promise with empty timeline
+        next([]);
+        next = null;
       }
     };
 
@@ -118,16 +123,14 @@ export class GroupRumorHistory
     this.on("cleared", notifyCleared);
 
     try {
-      yield await this.backend.queryRumors(filtersArray);
+      const timeline = (await this.backend.queryRumors(
+        filtersArray,
+      )) as NostrEvent[];
+
+      yield timeline;
 
       while (true) {
-        if (!pending) {
-          await new Promise<void>((resolve) => {
-            nextResolve = resolve;
-          });
-        }
-        pending = false;
-        yield await this.backend.queryRumors(filtersArray);
+        yield await new Promise<NostrEvent[]>((r) => (next = r));
       }
     } finally {
       this.off("rumor", notify);
