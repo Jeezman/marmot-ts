@@ -7,7 +7,6 @@ import {
   decode,
   defaultCredentialTypes,
   encode,
-  greaseValues,
   KeyPackage,
   keyPackageDecoder,
   keyPackageEncoder,
@@ -21,6 +20,7 @@ import {
 import { getTagValue, unixNow } from "../utils/nostr.js";
 import { isValidRelayUrl, normalizeRelayUrl } from "../utils/relay-url.js";
 import { getCredentialPubkey } from "./credential.js";
+import { isGreaseValue } from "./grease.js";
 import { calculateKeyPackageRef } from "./key-package.js";
 import {
   KEY_PACKAGE_CIPHER_SUITE_TAG,
@@ -206,11 +206,10 @@ async function createKeyPackageEventInternal(
 
   // Filter out GREASE values from the extension types
   // We only want to include actual extensions (last_resort and Marmot Group Data Extension)
-  const GREASE_VALUES = new Set<number>(greaseValues);
   const filteredExtensionTypes = extensionTypes.filter((hexValue) => {
     // Parse the hex value back to number to check if it's a GREASE value
     const extType = parseInt(hexValue);
-    return !GREASE_VALUES.has(extType);
+    return !isGreaseValue(extType);
   });
 
   // Get the protocol version - keyPackage.version is a numeric ProtocolVersionValue

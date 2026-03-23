@@ -1,4 +1,4 @@
-import { greaseValues } from "ts-mls";
+import { isGreaseValue } from "../../../src/core/grease.js";
 import { extendedExtensionTypes } from "../../../src/core/protocol.js";
 
 interface ExtensionBadgeProps {
@@ -16,7 +16,7 @@ export default function ExtensionBadge({
   // Extension type is now always a number in ts-mls v2
   const extensionTypeId = extensionType;
 
-  const isGrease = new Set<number>(greaseValues).has(extensionTypeId);
+  const isGrease = isGreaseValue(extensionTypeId);
 
   // Find the extension name from the extendedExtensionTypes map
   const extensionName =
