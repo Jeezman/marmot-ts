@@ -7,7 +7,7 @@ import {
   decode,
   defaultCredentialTypes,
   encode,
-  greaseExtensions,
+  greaseValues,
   KeyPackage,
   keyPackageDecoder,
   keyPackageEncoder,
@@ -32,12 +32,6 @@ import {
   KeyPackageClient,
   MLS_VERSIONS,
 } from "./protocol.js";
-
-const GREASE_EXTENSION_TYPES = new Set(
-  greaseExtensions({ probabilityPerGreaseValue: 1 }).map(
-    (extension) => extension.extensionType,
-  ),
-);
 
 export type DeleteKeyPackageEventInput = string | NostrEvent;
 
@@ -212,10 +206,11 @@ async function createKeyPackageEventInternal(
 
   // Filter out GREASE values from the extension types
   // We only want to include actual extensions (last_resort and Marmot Group Data Extension)
+  const GREASE_VALUES = new Set<number>(greaseValues);
   const filteredExtensionTypes = extensionTypes.filter((hexValue) => {
     // Parse the hex value back to number to check if it's a GREASE value
     const extType = parseInt(hexValue);
-    return !GREASE_EXTENSION_TYPES.has(extType);
+    return !GREASE_VALUES.has(extType);
   });
 
   // Get the protocol version - keyPackage.version is a numeric ProtocolVersionValue

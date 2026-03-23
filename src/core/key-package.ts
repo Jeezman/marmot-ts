@@ -7,11 +7,10 @@ import {
   defaultCredentialTypes,
   defaultCryptoProvider,
   CustomExtension,
-  encode,
   KeyPackage,
-  keyPackageEncoder,
   generateKeyPackage as MLSGenerateKeyPackage,
   Lifetime,
+  makeKeyPackageRef,
   PrivateKeyPackage,
 } from "ts-mls";
 
@@ -20,20 +19,6 @@ import { ensureMarmotCapabilities } from "./capabilities.js";
 import { getCredentialPubkey } from "./credential.js";
 import { defaultCapabilities } from "./default-capabilities.js";
 import { ensureLastResortExtension } from "./extensions.js";
-
-async function makeKeyPackageRef(
-  value: KeyPackage,
-  hash: CiphersuiteImpl["hash"],
-): Promise<Uint8Array> {
-  // `ts-mls` still implements this helper internally in keyPackage.ts, but it is
-  // not re-exported from the package root in rc.9. This mirrors upstream logic.
-  const label = new TextEncoder().encode("MLS 1.0 KeyPackage Reference");
-  const encoded = encode(keyPackageEncoder, value);
-  const payload = new Uint8Array(label.length + encoded.length);
-  payload.set(label, 0);
-  payload.set(encoded, label.length);
-  return await hash.digest(payload);
-}
 
 /**
  * A complete key package containing both public and private components.
@@ -58,8 +43,6 @@ export async function calculateKeyPackageRef(
   keyPackage: KeyPackage,
   cryptoProvider?: CryptoProvider,
 ): Promise<Uint8Array> {
-  // In v2, keyPackage.cipherSuite is a numeric ciphersuite id.
-  // Prefer id-first handling to avoid reverse mapping name<->id for correctness.
   const provider = cryptoProvider ?? defaultCryptoProvider;
   const ciphersuiteImpl = await provider.getCiphersuiteImpl(
     keyPackage.cipherSuite as CiphersuiteId,

@@ -21,12 +21,11 @@ import {
   defaultCryptoProvider,
   type IncomingMessageCallback,
   type LeafIndex,
+  getCredentialFromLeafIndex,
   MlsMessage,
-  nodeTypes,
   processMessage,
   type ProcessMessageResult,
   Proposal,
-  type RatchetTree,
   wireformats,
 } from "ts-mls";
 
@@ -67,21 +66,6 @@ import { proposeLeaveGroup } from "./proposals/leave-group.js";
 
 function toLeafIndex(index: number): LeafIndex {
   return index as LeafIndex;
-}
-
-function getCredentialFromLeafIndex(
-  ratchetTree: RatchetTree,
-  leafIndex: LeafIndex,
-) {
-  const senderLeafNode = ratchetTree[Number(leafIndex) * 2];
-
-  if (
-    senderLeafNode === undefined ||
-    senderLeafNode.nodeType === nodeTypes.parent
-  )
-    throw new Error("Unable to find leafnode for leafIndex");
-
-  return senderLeafNode.leaf.credential;
 }
 
 /** An event whose MLS message was successfully processed */

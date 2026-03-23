@@ -3,6 +3,7 @@ import {
   ciphersuites,
   defaultCapabilities as mlsDefaultCapabilities,
   defaultCredentialTypes,
+  greaseValues,
 } from "ts-mls";
 import { ensureMarmotCapabilities } from "./capabilities.js";
 
@@ -14,6 +15,7 @@ import { ensureMarmotCapabilities } from "./capabilities.js";
  */
 export function defaultCapabilities(): Capabilities {
   let capabilities = mlsDefaultCapabilities();
+  const GREASE_VALUES = new Set<number>(greaseValues);
 
   // Ensure capabilities include the Marmot Group Data Extension
   capabilities = ensureMarmotCapabilities(capabilities);
@@ -27,9 +29,8 @@ export function defaultCapabilities(): Capabilities {
     .filter(([name, id]) => {
       // Keep the default ciphersuite by name
       if (name === defaultCiphersuiteName) return true;
-      // Keep GREASE values (they have high numeric values, not sequential)
-      // GREASE values are typically in the 0x0A0A-0xFAFA range
-      if (id >= 0x0a0a && id <= 0xfafa) return true;
+      // Keep canonical GREASE values published by ts-mls.
+      if (GREASE_VALUES.has(id)) return true;
       return false;
     })
     .map(([, id]) => id) as Capabilities["ciphersuites"];

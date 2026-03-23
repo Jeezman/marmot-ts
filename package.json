@@ -77,7 +77,7 @@
     "applesauce-core": "^5.1.0",
     "debug": "^4.4.3",
     "eventemitter3": "^5.0.4",
-    "ts-mls": "2.0.0-rc.9"
+    "ts-mls": "2.0.0-rc.10"
   },
   "devDependencies": {
     "@changesets/cli": "^2.30.0",
